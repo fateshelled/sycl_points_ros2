@@ -46,26 +46,32 @@ endif()
 # ROS 2
 ament_auto_find_build_dependencies()
 
-ament_auto_add_executable(${PROJECT_NAME}
-  src/sycl_points_ros2.cpp
+ament_auto_add_library(lidar_odometry SHARED
+  src/lidar_odometry.cpp
 )
 
-target_include_directories(${PROJECT_NAME}  PUBLIC
+target_include_directories(lidar_odometry  PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(lidar_odometry
   sycl
   Eigen3::Eigen
 )
-target_compile_options(${PROJECT_NAME}  PRIVATE
+target_compile_options(lidar_odometry PRIVATE
   -fsycl
   -fsycl-targets=${SYCL_TARGET_FLAGS}
 )
 
-target_link_options(${PROJECT_NAME}  PRIVATE
+target_link_options(lidar_odometry PRIVATE
   -fsycl
   -fsycl-targets=${SYCL_TARGET_FLAGS}
+)
+
+rclcpp_components_register_node(
+  lidar_odometry
+  PLUGIN "sycl_points::ros2::LiDAROdometryNode"
+  EXECUTABLE lidar_odometry_node
 )
 
 if(BUILD_TESTING)

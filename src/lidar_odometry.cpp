@@ -11,9 +11,9 @@ namespace ros2 {
 /// @param options node option
 LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcpp::Node("lidar_odometry", options) {
     // SYCL queue
-    const auto device_selector = sycl_points::sycl_utils::device_selector::default_selector_v;
+    const auto device_selector = sycl_utils::device_selector::default_selector_v;
     sycl::device dev(device_selector);
-    this->queue_ptr_ = std::make_shared<sycl_points::sycl_utils::DeviceQueue>(dev);
+    this->queue_ptr_ = std::make_shared<sycl_utils::DeviceQueue>(dev);
     this->queue_ptr_->print_device_info();
 
     // initialize params
@@ -23,10 +23,9 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     this->gicp_param_.verbose = false;
 
     // Point cloud processor
-    this->preprocess_filter_ = std::make_shared<sycl_points::algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
-    this->voxel_filter_ = std::make_shared<sycl_points::algorithms::filter::VoxelGrid>(*this->queue_ptr_, voxel_size);
-    this->gicp_ =
-        std::make_shared<sycl_points::algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->gicp_param_);
+    this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
+    this->voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, voxel_size);
+    this->gicp_ = std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->gicp_param_);
 
     // pub/sub
     this->sub_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -44,26 +43,26 @@ LiDAROdometryNode::~LiDAROdometryNode() {}
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
     double dt_from_ros2_msg = 0.0;
-    sycl_points::time_utils::measure_execution([&]() { return fromROS2msg(*this->queue_ptr_, *msg, this->scan_pc_); },
-                                               dt_from_ros2_msg);
+    time_utils::measure_execution([&]() { return fromROS2msg(*this->queue_ptr_, *msg, this->scan_pc_); },
+                                  dt_from_ros2_msg);
     double dt_voxel_downsampling = 0.0;
-    sycl_points::time_utils::measure_execution(
+    time_utils::measure_execution(
         [&]() {
             if (this->preprocessed_pc_ == nullptr) {
-                this->preprocessed_pc_ = std::make_shared<sycl_points::PointCloudShared>(*this->queue_ptr_);
+                this->preprocessed_pc_ = std::make_shared<PointCloudShared>(*this->queue_ptr_);
             }
             this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
         },
         dt_voxel_downsampling);
 
     double dt_to_ros2_msg = 0.0;
-    auto pub_msg = sycl_points::time_utils::measure_execution(
-        [&]() { return toROS2msg(*this->preprocessed_pc_, msg->header); }, dt_to_ros2_msg);
+    auto pub_msg = time_utils::measure_execution([&]() { return toROS2msg(*this->preprocessed_pc_, msg->header); },
+                                                 dt_to_ros2_msg);
 
     double dt_publish = 0.0;
     if (this->pub_preprocessed_->get_subscription_count() > 0) {
-        sycl_points::time_utils::measure_execution(
-            [&]() { return this->pub_preprocessed_->publish(std::move(pub_msg)); }, dt_publish);
+        time_utils::measure_execution([&]() { return this->pub_preprocessed_->publish(std::move(pub_msg)); },
+                                      dt_publish);
     }
 
     RCLCPP_INFO(this->get_logger(), "fromROS2msg:       %8.3f us", dt_from_ros2_msg);

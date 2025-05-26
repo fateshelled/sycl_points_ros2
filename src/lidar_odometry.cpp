@@ -22,8 +22,11 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     this->gicp_param_.max_iterations = 20;
     this->gicp_param_.max_correspondence_distance = 2.0f;
     this->gicp_param_.verbose = false;
+
+    // set Initial pose
     this->odom_.setIdentity();
     this->last_keyframe_pose_.setIdentity();
+    this->ekf_.setInitialPose(this->odom_);
 
     // Point cloud processor
     this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
@@ -52,7 +55,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                   dt_from_ros2_msg);
 
     // preprocess
-    double dt_voxel_downsampling = 0.0;
+    double dt_preprocessing = 0.0;
     time_utils::measure_execution(
         [&]() {
             const float box_min = 2.0f;
@@ -64,7 +67,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             this->preprocess_filter_->box_filter(*this->scan_pc_, box_min, box_max);
             this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
         },
-        dt_voxel_downsampling);
+        dt_preprocessing);
 
     // compute covariances
     double dt_covariance = 0.0;
@@ -91,14 +94,22 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_registration = 0.0;
     const auto reg_result = time_utils::measure_execution(
         [&]() {
-            const auto result = this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_,
-                                                   this->odom_.matrix());
+            Eigen::Isometry3f init_T;
+            init_T.setIdentity();
+            // init_T = this->odom_;
 
-            if (result.converged) {
-                // update odometry
-                this->odom_ = result.T;
+            {
+                this->ekf_.predict();
+                init_T.translation() = this->ekf_.getPositionState();
+                init_T.matrix().block<3, 3>(0, 0) = this->ekf_.getQuaternionState().matrix();
             }
 
+            const auto result = this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_,
+                                                   init_T.matrix());
+
+            // update odometry
+            this->odom_ = result.T;
+            this->ekf_.update(result.T, rclcpp::Time(msg->header.stamp).seconds());
             return result;
         },
         dt_registration);
@@ -107,9 +118,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_build_submap = 0.0;
     time_utils::measure_execution(
         [&]() {
-            if (!reg_result.converged) {
-                return;
-            }
             // calculate delta pose
             const auto delta_pose = this->last_keyframe_pose_.inverse() * reg_result.T;
 
@@ -119,7 +127,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
             const float keyframe_distance_threshold = 2.0f;
             const float keyframe_angle_threshold_degrees = 30.0f;
-            const size_t max_submap_size = 20000;
+            const size_t max_submap_size = 100000;
 
             // update submap
             if (distance >= keyframe_distance_threshold || angle >= keyframe_angle_threshold_degrees) {
@@ -179,7 +187,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         dt_publish);
 
     RCLCPP_INFO(this->get_logger(), "fromROS2msg:         %9.2f us", dt_from_ros2_msg);
-    RCLCPP_INFO(this->get_logger(), "VoxelDownsampling:   %9.2f us", dt_voxel_downsampling);
+    RCLCPP_INFO(this->get_logger(), "Preprocessing    :   %9.2f us", dt_preprocessing);
     RCLCPP_INFO(this->get_logger(), "compute Covariances: %9.2f us", dt_covariance);
     RCLCPP_INFO(this->get_logger(), "Registration:        %9.2f us", dt_registration);
     RCLCPP_INFO(this->get_logger(), "Build submap:        %9.2f us", dt_build_submap);

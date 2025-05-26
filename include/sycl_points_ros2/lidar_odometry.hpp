@@ -1,5 +1,9 @@
 #pragma once
 
+#include <tf2_ros/transform_broadcaster.h>
+
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sycl_points/algorithms/knn_search.hpp>
@@ -7,16 +11,15 @@
 #include <sycl_points/algorithms/registration.hpp>
 #include <sycl_points/algorithms/voxel_downsampling.hpp>
 #include <sycl_points/utils/sycl_utils.hpp>
-#include <tf2_ros/transform_broadcaster.h>
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/odometry.hpp>
+
+#include "sycl_points_ros2/ekf.hpp"
 
 namespace sycl_points {
 namespace ros2 {
 class LiDAROdometryNode : public rclcpp::Node {
 public:
-EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    LiDAROdometryNode(const rclcpp::NodeOptions &options);
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    LiDAROdometryNode(const rclcpp::NodeOptions& options);
     ~LiDAROdometryNode();
 
 private:
@@ -43,6 +46,8 @@ private:
 
     Eigen::Isometry3f odom_;
     Eigen::Isometry3f last_keyframe_pose_;
+
+    sycl_points::ekf::PoseEKF ekf_;
 
     void point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
     void publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom);

@@ -28,7 +28,7 @@ public:
         this->P_ *= 0.1f;
 
         // Initialize process and observation noise
-        setDefaultNoiseMatrices();
+        set_default_noise_matrices();
 
         this->last_timestamp_ = -1.0;
         this->dt_ = 0.1;
@@ -36,20 +36,20 @@ public:
     }
 
     // Set diagonal components of process noise
-    void setProcessNoise(const StateVector& process_noise_diag) { this->Q_ = process_noise_diag.asDiagonal(); }
+    void set_process_noise(const StateVector& process_noise_diag) { this->Q_ = process_noise_diag.asDiagonal(); }
 
     // Set diagonal components of observation noise
-    void setObservationNoise(const ObsVector& obs_noise_diag) { this->R_ = obs_noise_diag.asDiagonal(); }
+    void set_observation_noise(const ObsVector& obs_noise_diag) { this->R_ = obs_noise_diag.asDiagonal(); }
 
     // Prediction step
     bool predict() {
         if (!this->is_initialized_) return false;
 
         // Calculate state transition
-        const StateVector x_pred = stateTransition(this->x_);
+        const StateVector x_pred = state_transition(this->x_);
 
         // Calculate Jacobian matrix
-        const StateMatrix F = computeStateJacobian(this->x_);
+        const StateMatrix F = compute_state_jacobian(this->x_);
 
         // Update covariance matrix
         this->P_ = F * this->P_ * F.transpose() + this->Q_;
@@ -58,7 +58,7 @@ public:
         this->x_ = x_pred;
 
         // Normalize quaternion
-        normalizeQuaternion();
+        normalize_quaternion();
         return true;
     }
 
@@ -67,10 +67,10 @@ public:
         const Eigen::Vector3f observed_position(odom.translation());
         const Eigen::Quaternionf observed_orientation(odom.rotation());
 
-        this->updateTimestamp(timestamp);
+        this->update_timestamp(timestamp);
 
         if (!this->is_initialized_) {
-            setInitialPose(odom);
+            set_initial_pose(odom);
             return;
         }
 
@@ -83,10 +83,10 @@ public:
         z(6) = observed_orientation.z();
 
         // Calculate predicted observation
-        const ObsVector h = observationModel(this->x_);
+        const ObsVector h = observation_model(this->x_);
 
         // Calculate observation Jacobian
-        const ObsJacobian H = computeObservationJacobian(this->x_);
+        const ObsJacobian H = compute_observation_jacobian(this->x_);
 
         // Innovation covariance matrix
         const ObsMatrix S = H * this->P_ * H.transpose() + this->R_;
@@ -95,7 +95,7 @@ public:
         const KalmanGain K = this->P_ * H.transpose() * (S + ObsMatrix::Identity() * 1e-4f).inverse();
 
         // Innovation vector (quaternion difference requires special treatment)
-        const ObsVector innovation = computeInnovation(z, h);
+        const ObsVector innovation = compute_innovation(z, h);
 
         // Update state vector
         this->x_ += K * innovation;
@@ -106,23 +106,30 @@ public:
         this->P_ = 0.5f * (this->P_ + this->P_.transpose());  // ensure symmetric
 
         // Normalize quaternion
-        normalizeQuaternion();
+        normalize_quaternion();
     }
 
     // Get current state
-    Eigen::Vector3f getPositionState() const { return this->x_.segment<3>(0); }
+    Eigen::Vector3f get_position_state() const { return this->x_.segment<3>(0); }
 
-    Eigen::Quaternionf getQuaternionState() const {
+    Eigen::Quaternionf get_quaternion_state() const {
         return Eigen::Quaternionf(this->x_(3), this->x_(4), this->x_(5), this->x_(6));
     }
 
-    Eigen::Vector3f getVelocityState() const { return this->x_.segment<3>(7); }
+    Eigen::Vector3f get_velocity_state() const { return this->x_.segment<3>(7); }
 
-    Eigen::Vector3f getAngularVelocityState() const { return this->x_.segment<3>(10); }
+    Eigen::Vector3f get_angular_velocity_state() const { return this->x_.segment<3>(10); }
 
-    const StateVector& getState() const { return this->x_; }
+    const StateVector& get_state() const { return this->x_; }
 
-    const StateMatrix& getCovariance() const { return this->P_; }
+    const StateMatrix& get_covariance() const { return this->P_; }
+
+    const Eigen::Isometry3f get_pose() const {
+        Eigen::Isometry3f pose;
+        pose.translation() = this->get_position_state();
+        pose.matrix().block<3, 3>(0, 0) = this->get_quaternion_state().matrix();
+        return pose;
+    }
 
 private:
     StateVector x_;  // State vector
@@ -134,7 +141,7 @@ private:
     bool is_initialized_;
 
     // Initialize state vector
-    void setInitialPose(const Eigen::Isometry3f& pose) {
+    void set_initial_pose(const Eigen::Isometry3f& pose) {
         this->x_.setZero();
 
         const Eigen::Quaternionf quat(pose.rotation());
@@ -155,7 +162,7 @@ private:
         this->is_initialized_ = true;
     }
 
-    void updateTimestamp(double timestamp) {
+    void update_timestamp(double timestamp) {
         if (this->last_timestamp_ < 0.0) {
             this->last_timestamp_ = timestamp;
             return;
@@ -168,24 +175,24 @@ private:
     }
 
     // Set default noise matrices
-    void setDefaultNoiseMatrices() {
+    void set_default_noise_matrices() {
         // Process noise (diagonal components)
         StateVector process_noise;
         process_noise << 0.01f, 0.01f, 0.01f,  // Position
             0.001f, 0.001f, 0.001f, 0.001f,    // Quaternion
             0.1f, 0.1f, 0.1f,                  // Velocity
             0.01f, 0.01f, 0.01f;               // Angular velocity
-        setProcessNoise(process_noise);
+        set_process_noise(process_noise);
 
         // Observation noise (diagonal components)
         ObsVector obs_noise;
         obs_noise << 0.05f, 0.05f, 0.05f,  // Position
             0.01f, 0.01f, 0.01f, 0.01f;    // Quaternion
-        setObservationNoise(obs_noise);
+        set_observation_noise(obs_noise);
     }
 
     // State transition function
-    StateVector stateTransition(const StateVector& x) const {
+    StateVector state_transition(const StateVector& x) const {
         StateVector x_next = x;  // copy
 
         // Update position: p += v * dt
@@ -229,7 +236,7 @@ private:
     }
 
     // Calculate Jacobian matrix of state transition
-    StateMatrix computeStateJacobian(const StateVector& x) const {
+    StateMatrix compute_state_jacobian(const StateVector& x) const {
         StateMatrix F = StateMatrix::Identity();
 
         // ∂p/∂v = I * dt
@@ -299,7 +306,7 @@ private:
     }
 
     // Observation model
-    ObsVector observationModel(const StateVector& x) const {
+    ObsVector observation_model(const StateVector& x) const {
         ObsVector h = ObsVector::Zero();
         h.segment<3>(0) = x.segment<3>(0);  // Position
         h.segment<4>(3) = x.segment<4>(3);  // Quaternion
@@ -307,7 +314,7 @@ private:
     }
 
     // Calculate observation Jacobian
-    ObsJacobian computeObservationJacobian(const StateVector& x) const {
+    ObsJacobian compute_observation_jacobian(const StateVector& x) const {
         ObsJacobian H = ObsJacobian::Zero();
 
         // Position observation
@@ -320,7 +327,7 @@ private:
     }
 
     // Calculate innovation vector (considering quaternion difference)
-    ObsVector computeInnovation(const ObsVector& z, const ObsVector& h) const {
+    ObsVector compute_innovation(const ObsVector& z, const ObsVector& h) const {
         ObsVector innovation;
 
         // Position difference
@@ -359,8 +366,8 @@ private:
     }
 
     // Normalize quaternion
-    void normalizeQuaternion() {
-        Eigen::Quaternionf quat = getQuaternionState();
+    void normalize_quaternion() {
+        Eigen::Quaternionf quat = get_quaternion_state();
         quat.normalize();
         x_(3) = quat.w();
         x_(4) = quat.x();

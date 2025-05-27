@@ -5,6 +5,8 @@
 #include <sycl_points/ros2/convert.hpp>
 #include <sycl_points/utils/time_utils.hpp>
 
+#include "sycl_points_ros2/imu.hpp"
+
 namespace sycl_points {
 namespace ros2 {
 
@@ -87,8 +89,7 @@ void LiDAROdometryNode::declare_parameters() {
 }
 
 void LiDAROdometryNode::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr msg) {
-    const Eigen::Vector3f angular_velocity(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z);
-    const Eigen::Vector3f linear_acceleration(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
+    auto imu = imu::fromROS2msg(*msg);
     // TODO
 }
 
@@ -140,8 +141,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             Eigen::Isometry3f init_T;
             {
                 if (this->ekf_.predict()) {
-                    init_T.translation() = this->ekf_.getPositionState();
-                    init_T.matrix().block<3, 3>(0, 0) = this->ekf_.getQuaternionState().matrix();
+                    init_T = this->ekf_.get_pose();
                 } else {
                     init_T = this->odom_;
                 }

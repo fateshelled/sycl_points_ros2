@@ -35,28 +35,6 @@ public:
         this->is_initialized_ = false;
     }
 
-    // Initialize state vector
-    void setInitialPose(const Eigen::Isometry3f& pose) {
-        this->x_.setZero();
-
-        const Eigen::Quaternionf quat(pose.rotation());
-
-        // Position
-        this->x_.segment<3>(0) = pose.translation();
-
-        // Quaternion (w, x, y, z)
-        this->x_(3) = quat.w();
-        this->x_(4) = quat.x();
-        this->x_(5) = quat.y();
-        this->x_(6) = quat.z();
-
-        // Initialize velocity and angular velocity to zero
-        // x_.segment<3>(7) = velocity (already zero)
-        // x_.segment<3>(10) = angular_velocity (already zero)
-
-        this->is_initialized_ = true;
-    }
-
     // Set diagonal components of process noise
     void setProcessNoise(const StateVector& process_noise_diag) { this->Q_ = process_noise_diag.asDiagonal(); }
 
@@ -64,8 +42,8 @@ public:
     void setObservationNoise(const ObsVector& obs_noise_diag) { this->R_ = obs_noise_diag.asDiagonal(); }
 
     // Prediction step
-    void predict() {
-        if (!this->is_initialized_) return;
+    bool predict() {
+        if (!this->is_initialized_) return false;
 
         // Calculate state transition
         const StateVector x_pred = stateTransition(this->x_);
@@ -81,6 +59,7 @@ public:
 
         // Normalize quaternion
         normalizeQuaternion();
+        return true;
     }
 
     // Update step (6DoF pose from LiDAR odometry)
@@ -113,7 +92,7 @@ public:
         const ObsMatrix S = H * this->P_ * H.transpose() + this->R_;
 
         // Calculate Kalman gain
-        const KalmanGain K = this->P_ * H.transpose() * (S + ObsMatrix::Identity() * 1e-6f).inverse();
+        const KalmanGain K = this->P_ * H.transpose() * (S + ObsMatrix::Identity() * 1e-4f).inverse();
 
         // Innovation vector (quaternion difference requires special treatment)
         const ObsVector innovation = computeInnovation(z, h);
@@ -154,6 +133,28 @@ private:
     double dt_;
     bool is_initialized_;
 
+    // Initialize state vector
+    void setInitialPose(const Eigen::Isometry3f& pose) {
+        this->x_.setZero();
+
+        const Eigen::Quaternionf quat(pose.rotation());
+
+        // Position
+        this->x_.segment<3>(0) = pose.translation();
+
+        // Quaternion (w, x, y, z)
+        this->x_(3) = quat.w();
+        this->x_(4) = quat.x();
+        this->x_(5) = quat.y();
+        this->x_(6) = quat.z();
+
+        // Initialize velocity and angular velocity to zero
+        // x_.segment<3>(7) = velocity (already zero)
+        // x_.segment<3>(10) = angular_velocity (already zero)
+
+        this->is_initialized_ = true;
+    }
+
     void updateTimestamp(double timestamp) {
         if (this->last_timestamp_ < 0.0) {
             this->last_timestamp_ = timestamp;
@@ -191,6 +192,7 @@ private:
         x_next.segment<3>(0) += x.segment<3>(7) * this->dt_;
 
         // Update quaternion
+        const Eigen::Quaternionf current_q(x(3), x(4), x(5), x(6));
         const Eigen::Vector3f angular_vel = x.segment<3>(10);
         const float angle = angular_vel.norm() * this->dt_;
 
@@ -198,9 +200,21 @@ private:
             const Eigen::Vector3f axis = angular_vel.normalized();
             const Eigen::Quaternionf delta_q(Eigen::AngleAxisf(angle, axis));
 
-            const Eigen::Quaternionf current_q(x(3), x(4), x(5), x(6));
             const Eigen::Quaternionf new_q = current_q * delta_q;
 
+            x_next(3) = new_q.w();
+            x_next(4) = new_q.x();
+            x_next(5) = new_q.y();
+            x_next(6) = new_q.z();
+        } else {
+            Eigen::Quaternionf delta_q;
+            delta_q.w() = 1.0f;
+            delta_q.x() = 0.5f * this->dt_ * angular_vel.x();
+            delta_q.y() = 0.5f * this->dt_ * angular_vel.y();
+            delta_q.z() = 0.5f * this->dt_ * angular_vel.z();
+            delta_q.normalize();
+
+            const Eigen::Quaternionf new_q = current_q * delta_q;
             x_next(3) = new_q.w();
             x_next(4) = new_q.x();
             x_next(5) = new_q.y();
@@ -236,29 +250,47 @@ private:
         F.block<4, 3>(3, 10) = 0.5f * this->dt_ * Q_omega;
 
         // Quaternion derivative with respect to current quaternion: ∂q/∂q
-        // q(k+1) ≒ q(k) + 0.5 * dt * Ω(ω) * q(k)
-        // ∂q(k+1)/∂q(k) = I + 0.5 * dt * Ω(ω)
-        if (angular_vel.norm() > 1e-6f) {
+        if (angular_vel.norm() > std::numeric_limits<float>::epsilon()) {
+            const float angle = angular_vel.norm() * this->dt_;
+            const Eigen::Vector3f axis = angular_vel.normalized();
+            const float half_angle = angle * 0.5f;
+            const float cos_half = std::cos(half_angle);
+            const float sin_half = std::sin(half_angle);
+
+            Eigen::Vector4f delta_q;
+            delta_q << cos_half, sin_half * axis.x(), sin_half * axis.y(), sin_half * axis.z();
+
             Eigen::Matrix4f Q_quat = Eigen::Matrix4f::Identity();
-            const float wx_dt = angular_vel(0) * this->dt_;
-            const float wy_dt = angular_vel(1) * this->dt_;
-            const float wz_dt = angular_vel(2) * this->dt_;
+            Q_quat << delta_q(0), -delta_q(1), -delta_q(2), -delta_q(3),  //
+                delta_q(1), delta_q(0), -delta_q(3), delta_q(2),          //
+                delta_q(2), delta_q(3), delta_q(0), -delta_q(1),          //
+                delta_q(3), -delta_q(2), delta_q(1), delta_q(0);
 
-            Q_quat(0, 1) = -0.5f * wx_dt;  // ∂qw/∂qx
-            Q_quat(0, 2) = -0.5f * wy_dt;  // ∂qw/∂qy
-            Q_quat(0, 3) = -0.5f * wz_dt;  // ∂qw/∂qz
+            F.block<4, 4>(3, 3) = Q_quat;
+        } else {
+            // If angular vel is too small, first approximation.
+            /* q(k+1) ≒ q(k) + 0.5 * dt * Ω(ω) * q(k) */
+            /* ∂q(k+1)/∂q(k) = I + 0.5 * dt * Ω(ω) */
+            Eigen::Matrix4f Q_quat = Eigen::Matrix4f::Identity();
+            const float wx_dt = angular_vel(0) * this->dt_ * 0.5f;
+            const float wy_dt = angular_vel(1) * this->dt_ * 0.5f;
+            const float wz_dt = angular_vel(2) * this->dt_ * 0.5f;
 
-            Q_quat(1, 0) = 0.5f * wx_dt;   // ∂qx/∂qw
-            Q_quat(1, 2) = 0.5f * wz_dt;   // ∂qx/∂qy
-            Q_quat(1, 3) = -0.5f * wy_dt;  // ∂qx/∂qz
+            Q_quat(0, 1) = -wx_dt;  // ∂qw/∂qx
+            Q_quat(0, 2) = -wy_dt;  // ∂qw/∂qy
+            Q_quat(0, 3) = -wz_dt;  // ∂qw/∂qz
 
-            Q_quat(2, 0) = 0.5f * wy_dt;   // ∂qy/∂qw
-            Q_quat(2, 1) = -0.5f * wz_dt;  // ∂qy/∂qx
-            Q_quat(2, 3) = 0.5f * wx_dt;   // ∂qy/∂qz
+            Q_quat(1, 0) = wx_dt;   // ∂qx/∂qw
+            Q_quat(1, 2) = wz_dt;   // ∂qx/∂qy
+            Q_quat(1, 3) = -wy_dt;  // ∂qx/∂qz
 
-            Q_quat(3, 0) = 0.5f * wx_dt;   // ∂qz/∂qw
-            Q_quat(3, 1) = 0.5f * wy_dt;   // ∂qz/∂qx
-            Q_quat(3, 2) = -0.5f * wz_dt;  // ∂qz/∂qy
+            Q_quat(2, 0) = wy_dt;   // ∂qy/∂qw
+            Q_quat(2, 1) = -wz_dt;  // ∂qy/∂qx
+            Q_quat(2, 3) = wx_dt;   // ∂qy/∂qz
+
+            Q_quat(3, 0) = wx_dt;   // ∂qz/∂qw
+            Q_quat(3, 1) = wy_dt;   // ∂qz/∂qx
+            Q_quat(3, 2) = -wz_dt;  // ∂qz/∂qy
 
             F.block<4, 4>(3, 3) = Q_quat;
         }
@@ -304,16 +336,17 @@ private:
 
         // Method 1: Use rotation vector representation (recommended)
         // Small angle approximation: δθ ≈ 2 * [qx, qy, qz] (when qw ≈ 1)
-        if (std::abs(error_q.w()) > 0.99f) {
+        if (std::abs(1.0f - error_q.w()) < 0.01f) {
             // Small angle approximation is valid
             innovation.segment<4>(3) << 0.0f,  // qw component is 0 (small angle)
                 2.0f * error_q.x(), 2.0f * error_q.y(), 2.0f * error_q.z();
         } else {
             // Large angle case: full rotation vector conversion
-            const float angle = 2.0f * std::acos(std::abs(error_q.w()));
+            const float angle = 2.0f * std::atan2(error_q.vec().norm(), error_q.w());
+            // const float angle = 2.0f *  std::acos(std::abs(error_q.w()));
             const float sin_half_angle = std::sqrt(1.0f - error_q.w() * error_q.w());
 
-            if (sin_half_angle > 1e-6f) {
+            if (sin_half_angle > std::numeric_limits<float>::epsilon()) {
                 const float scale = angle / sin_half_angle;
                 innovation.segment<4>(3) << 0.0f,  // qw component is 0
                     scale * error_q.x(), scale * error_q.y(), scale * error_q.z();

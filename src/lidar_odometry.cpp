@@ -11,6 +11,8 @@ namespace ros2 {
 /// @brief constructor
 /// @param options node option
 LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcpp::Node("lidar_odometry", options) {
+    this->declare_parameters();
+
     // SYCL queue
     const auto device_selector = sycl_utils::device_selector::default_selector_v;
     sycl::device dev(device_selector);
@@ -26,7 +28,33 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // set Initial pose
     this->odom_.setIdentity();
     this->last_keyframe_pose_.setIdentity();
-    this->ekf_.setInitialPose(this->odom_);
+
+    this->T_base_link_to_lidar_.setIdentity();
+    this->T_base_link_to_imu_.setIdentity();
+    this->T_lidar_to_imu_.setIdentity();
+    {
+        {
+            const auto T = this->get_parameter("T_base_link_to_lidar").as_double_array();
+            if (T.size() != 7) {
+                throw std::runtime_error("invalid T_base_link_to_lidar");
+            }
+            this->T_base_link_to_lidar_.translation() << T[0], T[1], T[2];
+            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+            this->T_base_link_to_lidar_.matrix().block<3, 3>(0, 0) = quat.matrix();
+        }
+
+        {
+            const auto T = this->get_parameter("T_base_link_to_imu").as_double_array();
+            if (T.size() != 7) {
+                throw std::runtime_error("invalid T_base_link_to_imu");
+            }
+            this->T_base_link_to_imu_.translation() << T[0], T[1], T[2];
+            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+            this->T_base_link_to_imu_.matrix().block<3, 3>(0, 0) = quat.matrix();
+        }
+        this->T_lidar_to_imu_ = this->T_base_link_to_lidar_.inverse() * this->T_base_link_to_imu_;
+        std::cout << "T_lidar_to_imu\n" << this->T_lidar_to_imu_.matrix() << std::endl;
+    }
 
     // Point cloud processor
     this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
@@ -36,6 +64,8 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // pub/sub
     this->sub_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         "points", rclcpp::QoS(10), std::bind(&LiDAROdometryNode::point_cloud_callback, this, std::placeholders::_1));
+    this->sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
+        "imu", rclcpp::QoS(10), std::bind(&LiDAROdometryNode::imu_callback, this, std::placeholders::_1));
 
     this->pub_preprocessed_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::SensorDataQoS());
@@ -48,6 +78,19 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 
 /// @brief destructor
 LiDAROdometryNode::~LiDAROdometryNode() {}
+
+void LiDAROdometryNode::declare_parameters() {
+    // Ouster os0
+    // x, y, z, qx, qy, qz, qw
+    this->declare_parameter<std::vector<double>>("T_base_link_to_lidar", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+    this->declare_parameter<std::vector<double>>("T_base_link_to_imu", {0.006, -0.012, 0.008, 0.0, 0.0, 0.0, 1.0});
+}
+
+void LiDAROdometryNode::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr msg) {
+    const Eigen::Vector3f angular_velocity(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z);
+    const Eigen::Vector3f linear_acceleration(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z);
+    // TODO
+}
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
     double dt_from_ros2_msg = 0.0;
@@ -95,17 +138,17 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     const auto reg_result = time_utils::measure_execution(
         [&]() {
             Eigen::Isometry3f init_T;
-            init_T.setIdentity();
-            // init_T = this->odom_;
-
             {
-                this->ekf_.predict();
-                init_T.translation() = this->ekf_.getPositionState();
-                init_T.matrix().block<3, 3>(0, 0) = this->ekf_.getQuaternionState().matrix();
+                if (this->ekf_.predict()) {
+                    init_T.translation() = this->ekf_.getPositionState();
+                    init_T.matrix().block<3, 3>(0, 0) = this->ekf_.getQuaternionState().matrix();
+                } else {
+                    init_T = this->odom_;
+                }
             }
 
-            const auto result = this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_,
-                                                   init_T.matrix());
+            const auto result =
+                this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
 
             // update odometry
             this->odom_ = result.T;
@@ -126,8 +169,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (float)(180.0 / M_PI);
 
             const float keyframe_distance_threshold = 2.0f;
-            const float keyframe_angle_threshold_degrees = 30.0f;
-            const size_t max_submap_size = 100000;
+            const float keyframe_angle_threshold_degrees = 20.0f;
+            const size_t max_submap_size = 50000;
 
             // update submap
             if (distance >= keyframe_distance_threshold || angle >= keyframe_angle_threshold_degrees) {

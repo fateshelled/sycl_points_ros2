@@ -34,30 +34,14 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     this->last_keyframe_pose_.setIdentity();
 
     this->T_base_link_to_lidar_.setIdentity();
-    this->T_base_link_to_imu_.setIdentity();
-    this->T_lidar_to_imu_.setIdentity();
     {
-        {
-            const auto T = this->get_parameter("T_base_link_to_lidar").as_double_array();
-            if (T.size() != 7) {
-                throw std::runtime_error("invalid T_base_link_to_lidar");
-            }
-            this->T_base_link_to_lidar_.translation() << T[0], T[1], T[2];
-            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
-            this->T_base_link_to_lidar_.matrix().block<3, 3>(0, 0) = quat.matrix();
+        const auto T = this->get_parameter("T_base_link_to_lidar").as_double_array();
+        if (T.size() != 7) {
+            throw std::runtime_error("invalid T_base_link_to_lidar");
         }
-
-        {
-            const auto T = this->get_parameter("T_base_link_to_imu").as_double_array();
-            if (T.size() != 7) {
-                throw std::runtime_error("invalid T_base_link_to_imu");
-            }
-            this->T_base_link_to_imu_.translation() << T[0], T[1], T[2];
-            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
-            this->T_base_link_to_imu_.matrix().block<3, 3>(0, 0) = quat.matrix();
-        }
-        this->T_lidar_to_imu_ = this->T_base_link_to_lidar_.inverse() * this->T_base_link_to_imu_;
-        std::cout << "T_lidar_to_imu\n" << this->T_lidar_to_imu_.matrix() << std::endl;
+        this->T_base_link_to_lidar_.translation() << T[0], T[1], T[2];
+        const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+        this->T_base_link_to_lidar_.matrix().block<3, 3>(0, 0) = quat.matrix();
     }
 
     // Point cloud processor
@@ -86,7 +70,6 @@ void LiDAROdometryNode::declare_parameters() {
     // Ouster os0
     // x, y, z, qx, qy, qz, qw
     this->declare_parameter<std::vector<double>>("T_base_link_to_lidar", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
-    this->declare_parameter<std::vector<double>>("T_base_link_to_imu", {0.006, -0.012, 0.008, 0.0, 0.0, 0.0, 1.0});
 }
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
@@ -123,6 +106,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         },
         dt_covariance);
 
+    // is first frame
     if (this->submap_pc_ == nullptr) {
         // copy to submap
         this->submap_pc_ = std::make_shared<PointCloudShared>(*this->preprocessed_pc_);
@@ -150,6 +134,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
     // Build submap
     const float inlier_ratio_th = 0.7f;
+    const float keyframe_distance_threshold = 2.0f;
+    const float keyframe_angle_threshold_degrees = 20.0f;
+    const size_t submap_covariance_neighbor_num = 20;
     double dt_build_submap = 0.0;
     time_utils::measure_execution(
         [&]() {
@@ -165,36 +152,27 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const auto distance = delta_pose.translation().norm();
             const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (float)(180.0 / M_PI);
 
-            const float keyframe_distance_threshold = 2.0f;
-            const float keyframe_angle_threshold_degrees = 20.0f;
-            const size_t submap_covariance_neighbor_num = 20;
-
             // update submap
             if (distance >= keyframe_distance_threshold || angle >= keyframe_angle_threshold_degrees) {
                 this->last_keyframe_pose_ = reg_result.T;
 
-                this->queue_ptr_->ptr
-                    ->submit([&](sycl::handler& h) {
-                        h.host_task([&]() {
-                            const auto aligned = this->gicp_->get_aligned_point_cloud();
-                            if (aligned == nullptr) {
-                                RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
-                            }
-                            // add new points
-                            this->submap_pc_->extend(*aligned);
+                const auto aligned = this->gicp_->get_aligned_point_cloud();
+                if (aligned == nullptr) {
+                    RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
+                    return;
+                }
+                // add new points
+                this->submap_pc_->extend(*aligned);
 
-                            // Voxel downsampling
-                            this->submap_voxel_filter_->downsampling(*this->submap_pc_, *this->submap_pc_);
+                // Voxel downsampling
+                this->submap_voxel_filter_->downsampling(*this->submap_pc_, *this->submap_pc_);
 
-                            this->submap_tree_ = sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_,
-                                                                                                    *this->submap_pc_);
+                this->submap_tree_ =
+                    sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
 
-                            algorithms::covariance::compute_covariances(*this->submap_tree_, *this->submap_pc_,
-                                                                        submap_covariance_neighbor_num);
-                            algorithms::covariance::covariance_update_plane(*this->submap_pc_);
-                        });
-                    })
-                    .wait();
+                algorithms::covariance::compute_covariances(*this->submap_tree_, *this->submap_pc_,
+                                                            submap_covariance_neighbor_num);
+                algorithms::covariance::covariance_update_plane(*this->submap_pc_);
             }
         },
         dt_build_submap);
@@ -226,7 +204,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         dt_publish);
 
     RCLCPP_INFO(this->get_logger(), "fromROS2msg:         %9.2f us", dt_from_ros2_msg);
-    RCLCPP_INFO(this->get_logger(), "Preprocessing    :   %9.2f us", dt_preprocessing);
+    RCLCPP_INFO(this->get_logger(), "Preprocessing:       %9.2f us", dt_preprocessing);
     RCLCPP_INFO(this->get_logger(), "compute Covariances: %9.2f us", dt_covariance);
     RCLCPP_INFO(this->get_logger(), "Registration:        %9.2f us", dt_registration);
     RCLCPP_INFO(this->get_logger(), "Build submap:        %9.2f us", dt_build_submap);

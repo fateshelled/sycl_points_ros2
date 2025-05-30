@@ -32,8 +32,6 @@ private:
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
     Eigen::Isometry3f T_base_link_to_lidar_;
-    Eigen::Isometry3f T_base_link_to_imu_;
-    Eigen::Isometry3f T_lidar_to_imu_;  // compute from T_base_link_to_lidar_ and T_base_link_to_imu_
 
     sycl_utils::DeviceQueue::Ptr queue_ptr_;
 
@@ -47,8 +45,6 @@ private:
     algorithms::filter::VoxelGrid::Ptr submap_voxel_filter_;
     algorithms::registration::RegistrationGICP::Ptr gicp_;
     algorithms::registration::RegistrationParams gicp_param_;
-
-    sycl_utils::events build_submap_events_;
 
     Eigen::Isometry3f odom_;
     Eigen::Isometry3f last_keyframe_pose_;

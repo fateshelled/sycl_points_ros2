@@ -23,9 +23,11 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 
     // initialize params
     const float voxel_size = 1.00f;
+    const float submap_voxel_size = 1.00f;
+    this->gicp_param_.lambda = 1e-4f;
     this->gicp_param_.max_iterations = 20;
     this->gicp_param_.max_correspondence_distance = 2.0f;
-    this->gicp_param_.verbose = false;
+    this->gicp_param_.verbose = true;
 
     // set Initial pose
     this->odom_.setIdentity();
@@ -61,13 +63,12 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // Point cloud processor
     this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
     this->voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, voxel_size);
+    this->submap_voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, submap_voxel_size);
     this->gicp_ = std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->gicp_param_);
 
     // pub/sub
     this->sub_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         "points", rclcpp::QoS(10), std::bind(&LiDAROdometryNode::point_cloud_callback, this, std::placeholders::_1));
-    this->sub_imu_ = this->create_subscription<sensor_msgs::msg::Imu>(
-        "imu", rclcpp::QoS(10), std::bind(&LiDAROdometryNode::imu_callback, this, std::placeholders::_1));
 
     this->pub_preprocessed_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::SensorDataQoS());
@@ -88,23 +89,19 @@ void LiDAROdometryNode::declare_parameters() {
     this->declare_parameter<std::vector<double>>("T_base_link_to_imu", {0.006, -0.012, 0.008, 0.0, 0.0, 0.0, 1.0});
 }
 
-void LiDAROdometryNode::imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr msg) {
-    auto imu = imu::fromROS2msg(*msg);
-    // TODO
-}
-
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
+    const auto timestamp = rclcpp::Time(msg->header.stamp).seconds();
+
     double dt_from_ros2_msg = 0.0;
     time_utils::measure_execution([&]() { return fromROS2msg(*this->queue_ptr_, *msg, this->scan_pc_); },
                                   dt_from_ros2_msg);
 
     // preprocess
+    const float box_min = 2.0f;
+    const float box_max = 50.0f;
     double dt_preprocessing = 0.0;
     time_utils::measure_execution(
         [&]() {
-            const float box_min = 2.0f;
-            const float box_max = 50.0f;
-
             if (this->preprocessed_pc_ == nullptr) {
                 this->preprocessed_pc_ = std::make_shared<PointCloudShared>(*this->queue_ptr_);
             }
@@ -114,11 +111,10 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         dt_preprocessing);
 
     // compute covariances
+    const size_t covariance_neighbor_num = 10;
     double dt_covariance = 0.0;
     const auto src_tree = time_utils::measure_execution(
         [&]() {
-            const size_t covariance_neighbor_num = 20;
-
             const auto tree =
                 sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
             algorithms::covariance::compute_covariances(*tree, *this->preprocessed_pc_, covariance_neighbor_num);
@@ -135,32 +131,33 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     }
 
     // Registration
+    const size_t random_sampling_size = 1000;
     double dt_registration = 0.0;
     const auto reg_result = time_utils::measure_execution(
         [&]() {
-            Eigen::Isometry3f init_T;
-            {
-                if (this->ekf_.predict()) {
-                    init_T = this->ekf_.get_pose();
-                } else {
-                    init_T = this->odom_;
-                }
-            }
+            const Eigen::Isometry3f init_T = this->odom_;
+
+            this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, random_sampling_size);
 
             const auto result =
                 this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
 
             // update odometry
             this->odom_ = result.T;
-            this->ekf_.update(result.T, rclcpp::Time(msg->header.stamp).seconds());
             return result;
         },
         dt_registration);
 
     // Build submap
+    const float inlier_ratio_th = 0.7f;
     double dt_build_submap = 0.0;
     time_utils::measure_execution(
         [&]() {
+            const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->preprocessed_pc_->size();
+            if (inlier_ratio <= inlier_ratio_th) {
+                return;
+            }
+
             // calculate delta pose
             const auto delta_pose = this->last_keyframe_pose_.inverse() * reg_result.T;
 
@@ -170,32 +167,31 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
             const float keyframe_distance_threshold = 2.0f;
             const float keyframe_angle_threshold_degrees = 20.0f;
-            const size_t max_submap_size = 50000;
+            const size_t submap_covariance_neighbor_num = 20;
 
             // update submap
             if (distance >= keyframe_distance_threshold || angle >= keyframe_angle_threshold_degrees) {
                 this->last_keyframe_pose_ = reg_result.T;
 
-                const auto aligned = this->gicp_->get_aligned_point_cloud();
-                if (aligned == nullptr) {
-                    RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
-                }
-                // add new points
-                this->submap_pc_->extend(*aligned);
-
-                // remove old points
-                if (this->submap_pc_->size() > max_submap_size) {
-                    this->submap_pc_->erase(0, this->submap_pc_->size() - max_submap_size);
-                    RCLCPP_ERROR(this->get_logger(), "erase %ld ", this->submap_pc_->size());
-                }
-
-                // this->submap_tree_ =
-                //     sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
                 this->queue_ptr_->ptr
                     ->submit([&](sycl::handler& h) {
                         h.host_task([&]() {
+                            const auto aligned = this->gicp_->get_aligned_point_cloud();
+                            if (aligned == nullptr) {
+                                RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
+                            }
+                            // add new points
+                            this->submap_pc_->extend(*aligned);
+
+                            // Voxel downsampling
+                            this->submap_voxel_filter_->downsampling(*this->submap_pc_, *this->submap_pc_);
+
                             this->submap_tree_ = sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_,
                                                                                                     *this->submap_pc_);
+
+                            algorithms::covariance::compute_covariances(*this->submap_tree_, *this->submap_pc_,
+                                                                        submap_covariance_neighbor_num);
+                            algorithms::covariance::covariance_update_plane(*this->submap_pc_);
                         });
                     })
                     .wait();

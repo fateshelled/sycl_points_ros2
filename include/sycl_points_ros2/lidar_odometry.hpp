@@ -13,7 +13,6 @@
 #include <sycl_points/algorithms/voxel_downsampling.hpp>
 #include <sycl_points/utils/sycl_utils.hpp>
 
-#include "sycl_points_ros2/ekf.hpp"
 
 namespace sycl_points {
 namespace ros2 {
@@ -45,6 +44,7 @@ private:
 
     algorithms::filter::PreprocessFilter::Ptr preprocess_filter_;
     algorithms::filter::VoxelGrid::Ptr voxel_filter_;
+    algorithms::filter::VoxelGrid::Ptr submap_voxel_filter_;
     algorithms::registration::RegistrationGICP::Ptr gicp_;
     algorithms::registration::RegistrationParams gicp_param_;
 
@@ -52,8 +52,6 @@ private:
 
     Eigen::Isometry3f odom_;
     Eigen::Isometry3f last_keyframe_pose_;
-
-    sycl_points::ekf::PoseEKF ekf_;
 
     void declare_parameters();
     void imu_callback(const sensor_msgs::msg::Imu::ConstSharedPtr msg);

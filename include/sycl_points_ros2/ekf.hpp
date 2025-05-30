@@ -30,8 +30,6 @@ public:
         // Initialize process and observation noise
         set_default_noise_matrices();
 
-        this->last_timestamp_ = -1.0;
-        this->dt_ = 0.1;
         this->is_initialized_ = false;
     }
 
@@ -41,15 +39,18 @@ public:
     // Set diagonal components of observation noise
     void set_observation_noise(const ObsVector& obs_noise_diag) { this->R_ = obs_noise_diag.asDiagonal(); }
 
-    // Prediction step
-    bool predict() {
+    /// @brief predict no input
+    /// @return success or not
+    bool predict(double timestamp) {
         if (!this->is_initialized_) return false;
 
+        const auto dt = this->calc_predict_timestamp(timestamp);
+
         // Calculate state transition
-        const StateVector x_pred = state_transition(this->x_);
+        const StateVector x_pred = state_transition(this->x_, dt);
 
         // Calculate Jacobian matrix
-        const StateMatrix F = compute_state_jacobian(this->x_);
+        const StateMatrix F = compute_state_jacobian(this->x_, dt);
 
         // Update covariance matrix
         this->P_ = F * this->P_ * F.transpose() + this->Q_;
@@ -63,11 +64,9 @@ public:
     }
 
     // Update step (6DoF pose from LiDAR odometry)
-    void update(const Eigen::Isometry3f& odom, double timestamp) {
+    void update(const Eigen::Isometry3f& odom) {
         const Eigen::Vector3f observed_position(odom.translation());
         const Eigen::Quaternionf observed_orientation(odom.rotation());
-
-        this->update_timestamp(timestamp);
 
         if (!this->is_initialized_) {
             set_initial_pose(odom);
@@ -136,8 +135,9 @@ private:
     StateMatrix P_;  // Covariance matrix
     StateMatrix Q_;  // Process noise covariance matrix
     ObsMatrix R_;    // Observation noise covariance matrix
-    double last_timestamp_ = -1.0;
-    double dt_;
+
+    double last_predict_timestamp_ = -1.0;
+    const double default_predict_dt_ = 0.1;  // 10Hz
     bool is_initialized_;
 
     // Initialize state vector
@@ -162,16 +162,17 @@ private:
         this->is_initialized_ = true;
     }
 
-    void update_timestamp(double timestamp) {
-        if (this->last_timestamp_ < 0.0) {
-            this->last_timestamp_ = timestamp;
-            return;
+    double calc_predict_timestamp(double timestamp) {
+        if (this->last_predict_timestamp_ < 0.0) {
+            this->last_predict_timestamp_ = timestamp;
+            return this->default_predict_dt_;
         };
-        if (timestamp < this->last_timestamp_) {
+        if (timestamp < this->last_predict_timestamp_) {
             throw std::runtime_error("Invalid timestamp.");
         }
-        this->dt_ = timestamp - this->last_timestamp_;
-        this->last_timestamp_ = timestamp;
+        const auto dt = timestamp - this->last_predict_timestamp_;
+        this->last_predict_timestamp_ = timestamp;
+        return dt;
     }
 
     // Set default noise matrices
@@ -192,19 +193,23 @@ private:
     }
 
     // State transition function
-    StateVector state_transition(const StateVector& x) const {
+    StateVector state_transition(const StateVector& x, double dt) const {
         StateVector x_next = x;  // copy
 
+        // current state
+        const Eigen::Vector3f current_position = x.segment<3>(0);
+        const Eigen::Vector3f current_velocity = x.segment<3>(7);
+        const Eigen::Vector3f current_angular_vel = x.segment<3>(10);
+        const Eigen::Quaternionf current_q(x(3), x(4), x(5), x(6));
+
         // Update position: p += v * dt
-        x_next.segment<3>(0) += x.segment<3>(7) * this->dt_;
+        x_next.segment<3>(0) += current_velocity * dt;
 
         // Update quaternion
-        const Eigen::Quaternionf current_q(x(3), x(4), x(5), x(6));
-        const Eigen::Vector3f angular_vel = x.segment<3>(10);
-        const float angle = angular_vel.norm() * this->dt_;
+        const float angle = current_angular_vel.norm() * dt;
 
         if (angle > std::numeric_limits<float>::epsilon()) {
-            const Eigen::Vector3f axis = angular_vel.normalized();
+            const Eigen::Vector3f axis = current_angular_vel.normalized();
             const Eigen::Quaternionf delta_q(Eigen::AngleAxisf(angle, axis));
 
             const Eigen::Quaternionf new_q = current_q * delta_q;
@@ -216,9 +221,9 @@ private:
         } else {
             Eigen::Quaternionf delta_q;
             delta_q.w() = 1.0f;
-            delta_q.x() = 0.5f * this->dt_ * angular_vel.x();
-            delta_q.y() = 0.5f * this->dt_ * angular_vel.y();
-            delta_q.z() = 0.5f * this->dt_ * angular_vel.z();
+            delta_q.x() = 0.5f * dt * current_angular_vel.x();
+            delta_q.y() = 0.5f * dt * current_angular_vel.y();
+            delta_q.z() = 0.5f * dt * current_angular_vel.z();
             delta_q.normalize();
 
             const Eigen::Quaternionf new_q = current_q * delta_q;
@@ -236,11 +241,11 @@ private:
     }
 
     // Calculate Jacobian matrix of state transition
-    StateMatrix compute_state_jacobian(const StateVector& x) const {
+    StateMatrix compute_state_jacobian(const StateVector& x, double dt) const {
         StateMatrix F = StateMatrix::Identity();
 
         // ∂p/∂v = I * dt
-        F.block<3, 3>(0, 7) = Eigen::Matrix3f::Identity() * this->dt_;
+        F.block<3, 3>(0, 7) = Eigen::Matrix3f::Identity() * dt;
 
         // Quaternion derivative with respect to angular velocity: ∂q/∂ω
         const Eigen::Vector3f angular_vel = x.segment<3>(10);
@@ -254,11 +259,11 @@ private:
             q.z(), q.w(), -q.x(),           // ∂qy/∂ω
             -q.y(), q.x(), q.w();           // ∂qz/∂ω
 
-        F.block<4, 3>(3, 10) = 0.5f * this->dt_ * Q_omega;
+        F.block<4, 3>(3, 10) = 0.5f * dt * Q_omega;
 
         // Quaternion derivative with respect to current quaternion: ∂q/∂q
         if (angular_vel.norm() > std::numeric_limits<float>::epsilon()) {
-            const float angle = angular_vel.norm() * this->dt_;
+            const float angle = angular_vel.norm() * dt;
             const Eigen::Vector3f axis = angular_vel.normalized();
             const float half_angle = angle * 0.5f;
             const float cos_half = std::cos(half_angle);
@@ -279,9 +284,9 @@ private:
             /* q(k+1) ≒ q(k) + 0.5 * dt * Ω(ω) * q(k) */
             /* ∂q(k+1)/∂q(k) = I + 0.5 * dt * Ω(ω) */
             Eigen::Matrix4f Q_quat = Eigen::Matrix4f::Identity();
-            const float wx_dt = angular_vel(0) * this->dt_ * 0.5f;
-            const float wy_dt = angular_vel(1) * this->dt_ * 0.5f;
-            const float wz_dt = angular_vel(2) * this->dt_ * 0.5f;
+            const float wx_dt = angular_vel(0) * dt * 0.5f;
+            const float wy_dt = angular_vel(1) * dt * 0.5f;
+            const float wz_dt = angular_vel(2) * dt * 0.5f;
 
             Q_quat(0, 1) = -wx_dt;  // ∂qw/∂qx
             Q_quat(0, 2) = -wy_dt;  // ∂qw/∂qy

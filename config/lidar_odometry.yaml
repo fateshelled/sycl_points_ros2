@@ -1,0 +1,29 @@
+lidar_odometry_node:
+  ros__parameters:
+    # gpu or cpu
+    sycl/device_type: gpu
+    # intel or nvidia or amd
+    sycl/device_vendor: intel
+
+    # x, y, z, qx, qy, qz, qw
+    initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+
+    scan/covariance/neighbor_num: 10
+    scan/preprocess/box_filter/max: 50.0
+    scan/preprocess/box_filter/min: 2.0
+    scan/preprocess/random_sampling/num: 1000
+    scan/voxel_size: 1.0
+
+    submap/covariance/neighbor_num: 10
+    submap/voxel_size: 1.0
+    keyframe/angle_threshold_degrees: 20.0
+    keyframe/distance_threshold: 2.0
+    keyframe/inlier_ratio_threshold: 0.7
+
+    gicp/max_iterations: 20.0
+    gicp/lambda: 1e-4
+    gicp/max_correspondence_distance: 2.0
+    gicp/translation_eps: 1e-3
+    gicp/rotation_eps: 1e-3
+    gicp/verbose: true
+

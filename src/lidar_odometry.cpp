@@ -5,50 +5,33 @@
 #include <sycl_points/ros2/convert.hpp>
 #include <sycl_points/utils/time_utils.hpp>
 
-#include "sycl_points_ros2/imu.hpp"
-
 namespace sycl_points {
 namespace ros2 {
 
 /// @brief constructor
 /// @param options node option
 LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcpp::Node("lidar_odometry", options) {
-    this->declare_parameters();
+    this->params_ = this->get_parameters();
 
     // SYCL queue
-    const auto device_selector = sycl_utils::device_selector::default_selector_v;
-    sycl::device dev(device_selector);
+    // const auto device_selector = sycl_utils::device_selector::default_selector_v;
+    // sycl::device dev(device_selector);
+    const auto dev =
+        sycl_utils::device_selector::select_device(this->params_.sycl_device_vendor, this->params_.sycl_device_type);
     this->queue_ptr_ = std::make_shared<sycl_utils::DeviceQueue>(dev);
     this->queue_ptr_->print_device_info();
 
-    // initialize params
-    const float voxel_size = 1.00f;
-    const float submap_voxel_size = 1.00f;
-    this->gicp_param_.lambda = 1e-4f;
-    this->gicp_param_.max_iterations = 20;
-    this->gicp_param_.max_correspondence_distance = 2.0f;
-    this->gicp_param_.verbose = true;
-
     // set Initial pose
-    this->odom_.setIdentity();
-    this->last_keyframe_pose_.setIdentity();
-
-    this->T_base_link_to_lidar_.setIdentity();
-    {
-        const auto T = this->get_parameter("T_base_link_to_lidar").as_double_array();
-        if (T.size() != 7) {
-            throw std::runtime_error("invalid T_base_link_to_lidar");
-        }
-        this->T_base_link_to_lidar_.translation() << T[0], T[1], T[2];
-        const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
-        this->T_base_link_to_lidar_.matrix().block<3, 3>(0, 0) = quat.matrix();
-    }
+    this->odom_ = this->params_.initial_pose;
+    this->last_keyframe_pose_ = this->params_.initial_pose;
 
     // Point cloud processor
     this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
-    this->voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, voxel_size);
-    this->submap_voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, submap_voxel_size);
-    this->gicp_ = std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->gicp_param_);
+    this->voxel_filter_ =
+        std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, this->params_.scan_voxel_size);
+    this->submap_voxel_filter_ =
+        std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, this->params_.submap_voxel_size);
+    this->gicp_ = std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->params_.gicp);
 
     // pub/sub
     this->sub_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -66,10 +49,63 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 /// @brief destructor
 LiDAROdometryNode::~LiDAROdometryNode() {}
 
-void LiDAROdometryNode::declare_parameters() {
-    // Ouster os0
-    // x, y, z, qx, qy, qz, qw
-    this->declare_parameter<std::vector<double>>("T_base_link_to_lidar", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
+    LiDAROdometryNode::Parameters params;
+
+    params.sycl_device_vendor = this->declare_parameter<std::string>("sycl/device_vendor", params.sycl_device_vendor);
+    params.sycl_device_type = this->declare_parameter<std::string>("sycl/device_type", params.sycl_device_type);
+
+    params.scan_voxel_size = this->declare_parameter<double>("scan/voxel_size", params.scan_voxel_size);
+    params.scan_covariance_neighbor_num =
+        this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
+    params.scan_preprocess_box_filter_min =
+        this->declare_parameter<double>("scan/preprocess/box_filter/min", params.scan_preprocess_box_filter_min);
+    params.scan_preprocess_box_filter_max =
+        this->declare_parameter<double>("scan/preprocess/box_filter/max", params.scan_preprocess_box_filter_max);
+    params.scan_preprocess_random_sampling_num =
+        this->declare_parameter<int>("scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
+
+    params.submap_voxel_size = this->declare_parameter<double>("submap/voxel_size", params.submap_voxel_size);
+    params.submap_covariance_neighbor_num =
+        this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
+
+    params.keyframe_inlier_ratio_threshold =
+        this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
+    params.keyframe_distance_threshold =
+        this->declare_parameter<double>("keyframe/distance_threshold", params.keyframe_distance_threshold);
+    params.keyframe_angle_threshold_degrees =
+        this->declare_parameter<double>("keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
+
+    params.gicp.max_iterations = this->declare_parameter<double>("gicp/max_iterations", 20);
+    params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", 1e-4);
+    params.gicp.max_correspondence_distance = this->declare_parameter<double>("gicp/max_correspondence_distance", 2.0);
+    params.gicp.translation_eps = this->declare_parameter<double>("gicp/translation_eps", 1e-3);
+    params.gicp.rotation_eps = this->declare_parameter<double>("gicp/rotation_eps", 1e-3);
+    params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
+
+    {
+        // Ouster os0
+        // x, y, z, qx, qy, qz, qw
+        const auto T =
+            this->declare_parameter<std::vector<double>>("T_base_link_to_lidar", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+        if (T.size() != 7) throw std::runtime_error("invalid T_base_link_to_lidar");
+        params.T_base_link_to_lidar.setIdentity();
+        params.T_base_link_to_lidar.translation() << T[0], T[1], T[2];
+        const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+        params.T_base_link_to_lidar.matrix().block<3, 3>(0, 0) = quat.matrix();
+    }
+
+    {
+        // x, y, z, qx, qy, qz, qw
+        const auto T =
+            this->declare_parameter<std::vector<double>>("initial_pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+        if (T.size() != 7) throw std::runtime_error("invalid initial_pose");
+        params.initial_pose.setIdentity();
+        params.initial_pose.translation() << T[0], T[1], T[2];
+        const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+        params.initial_pose.matrix().block<3, 3>(0, 0) = quat.matrix();
+    }
+    return params;
 }
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
@@ -80,27 +116,26 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                   dt_from_ros2_msg);
 
     // preprocess
-    const float box_min = 2.0f;
-    const float box_max = 50.0f;
     double dt_preprocessing = 0.0;
     time_utils::measure_execution(
         [&]() {
             if (this->preprocessed_pc_ == nullptr) {
                 this->preprocessed_pc_ = std::make_shared<PointCloudShared>(*this->queue_ptr_);
             }
-            this->preprocess_filter_->box_filter(*this->scan_pc_, box_min, box_max);
+            this->preprocess_filter_->box_filter(*this->scan_pc_, this->params_.scan_preprocess_box_filter_min,
+                                                 this->params_.scan_preprocess_box_filter_max);
             this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
         },
         dt_preprocessing);
 
     // compute covariances
-    const size_t covariance_neighbor_num = 10;
     double dt_covariance = 0.0;
     const auto src_tree = time_utils::measure_execution(
         [&]() {
             const auto tree =
                 sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
-            algorithms::covariance::compute_covariances(*tree, *this->preprocessed_pc_, covariance_neighbor_num);
+            algorithms::covariance::compute_covariances(*tree, *this->preprocessed_pc_,
+                                                        this->params_.scan_covariance_neighbor_num);
             algorithms::covariance::covariance_update_plane(*this->preprocessed_pc_);
             return tree;
         },
@@ -115,13 +150,13 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     }
 
     // Registration
-    const size_t random_sampling_size = 1000;
     double dt_registration = 0.0;
     const auto reg_result = time_utils::measure_execution(
         [&]() {
             const Eigen::Isometry3f init_T = this->odom_;
 
-            this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, random_sampling_size);
+            this->preprocess_filter_->random_sampling(*this->preprocessed_pc_,
+                                                      this->params_.scan_preprocess_random_sampling_num);
 
             const auto result =
                 this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
@@ -133,15 +168,11 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         dt_registration);
 
     // Build submap
-    const float inlier_ratio_th = 0.7f;
-    const float keyframe_distance_threshold = 2.0f;
-    const float keyframe_angle_threshold_degrees = 20.0f;
-    const size_t submap_covariance_neighbor_num = 20;
     double dt_build_submap = 0.0;
     time_utils::measure_execution(
         [&]() {
             const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->preprocessed_pc_->size();
-            if (inlier_ratio <= inlier_ratio_th) {
+            if (inlier_ratio <= this->params_.keyframe_inlier_ratio_threshold) {
                 return;
             }
 
@@ -153,7 +184,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (float)(180.0 / M_PI);
 
             // update submap
-            if (distance >= keyframe_distance_threshold || angle >= keyframe_angle_threshold_degrees) {
+            if (distance >= this->params_.keyframe_distance_threshold ||
+                angle >= this->params_.keyframe_angle_threshold_degrees) {
                 this->last_keyframe_pose_ = reg_result.T;
 
                 const auto aligned = this->gicp_->get_aligned_point_cloud();
@@ -171,7 +203,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                     sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
 
                 algorithms::covariance::compute_covariances(*this->submap_tree_, *this->submap_pc_,
-                                                            submap_covariance_neighbor_num);
+                                                            this->params_.submap_covariance_neighbor_num);
                 algorithms::covariance::covariance_update_plane(*this->submap_pc_);
             }
         },

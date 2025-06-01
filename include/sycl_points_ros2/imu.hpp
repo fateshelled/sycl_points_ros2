@@ -14,15 +14,6 @@ struct IMU {
     double timestamp = 0.0;
     LinearAccceleration linear_acceleration = LinearAccceleration::Zero();
     AngularVelocity angular_velocity = AngularVelocity::Zero();
-
-    void remove_gravity_vector(const LinearAccceleration& gravity) { this->linear_acceleration -= gravity; }
-
-    void transform(const Eigen::Isometry3f& T) {
-        this->linear_acceleration = T.rotation() * this->linear_acceleration;
-        // TODO add kinematic effects
-
-        this->angular_velocity = T.rotation() * this->angular_velocity;
-    }
 };
 
 inline IMU fromROS2msg(const sensor_msgs::msg::Imu& msg) {

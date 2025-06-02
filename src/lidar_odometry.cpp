@@ -79,6 +79,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.gicp.max_iterations = this->declare_parameter<double>("gicp/max_iterations", 20);
     params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", 1e-4);
     params.gicp.max_correspondence_distance = this->declare_parameter<double>("gicp/max_correspondence_distance", 2.0);
+    params.gicp.adaptive_correspondence_distance = this->declare_parameter<bool>("gicp/adaptive_correspondence_distance", true);
+    params.gicp.inlier_ratio = this->declare_parameter<double>("gicp/inlier_ratio", 0.7);
     params.gicp.translation_eps = this->declare_parameter<double>("gicp/translation_eps", 1e-3);
     params.gicp.rotation_eps = this->declare_parameter<double>("gicp/rotation_eps", 1e-3);
     params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);

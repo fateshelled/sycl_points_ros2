@@ -23,6 +23,8 @@ lidar_odometry_node:
     gicp/max_iterations: 20.0
     gicp/lambda: 1e-4
     gicp/max_correspondence_distance: 2.0
+    gicp/adaptive_correspondence_distance: true
+    gicp/inlier_ratio: 0.7
     gicp/translation_eps: 1e-3
     gicp/rotation_eps: 1e-3
     gicp/verbose: true

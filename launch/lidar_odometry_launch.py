@@ -33,14 +33,24 @@ def generate_launch_description():
     package_dir = get_package_share_directory(package_name)
     param_yaml = os.path.join(package_dir, "config", "lidar_odometry.yaml")
     launch_args, node_args = declare_params_from_yaml(param_yaml, node_name)
-
-    node = Node(
-        package=package_name,
-        executable=node_name,
-        name=node_name,
-        output="screen",
-        emulate_tty=True,
-        parameters=[node_args],
+    launch_args.append(
+        DeclareLaunchArgument(
+            "point_topic", default_value="/os_cloud_node/points", description="source point cloud topic"
+        )
     )
 
-    return LaunchDescription(launch_args + [node])
+    nodes = [
+        Node(
+            package=package_name,
+            executable=node_name,
+            name=node_name,
+            output="screen",
+            emulate_tty=True,
+            parameters=[node_args],
+            remappings=[
+                ("points", LaunchConfiguration("point_topic")),
+            ]
+        ),
+    ]
+
+    return LaunchDescription(launch_args + nodes)

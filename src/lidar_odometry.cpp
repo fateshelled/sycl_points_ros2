@@ -79,7 +79,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.gicp.max_iterations = this->declare_parameter<double>("gicp/max_iterations", 20);
     params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", 1e-4);
     params.gicp.max_correspondence_distance = this->declare_parameter<double>("gicp/max_correspondence_distance", 2.0);
-    params.gicp.adaptive_correspondence_distance = this->declare_parameter<bool>("gicp/adaptive_correspondence_distance", true);
+    params.gicp.adaptive_correspondence_distance =
+        this->declare_parameter<bool>("gicp/adaptive_correspondence_distance", true);
     params.gicp.inlier_ratio = this->declare_parameter<double>("gicp/inlier_ratio", 0.7);
     params.gicp.translation_eps = this->declare_parameter<double>("gicp/translation_eps", 1e-3);
     params.gicp.rotation_eps = this->declare_parameter<double>("gicp/rotation_eps", 1e-3);
@@ -136,8 +137,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         [&]() {
             const auto tree =
                 sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
-            algorithms::covariance::compute_covariances(*tree, *this->preprocessed_pc_,
-                                                        this->params_.scan_covariance_neighbor_num);
+            algorithms::covariance::compute_covariances_async(*tree, *this->preprocessed_pc_,
+                                                              this->params_.scan_covariance_neighbor_num)
+                .wait();
             algorithms::covariance::covariance_update_plane(*this->preprocessed_pc_);
             return tree;
         },
@@ -204,8 +206,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 this->submap_tree_ =
                     sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
 
-                algorithms::covariance::compute_covariances(*this->submap_tree_, *this->submap_pc_,
-                                                            this->params_.submap_covariance_neighbor_num);
+                algorithms::covariance::compute_covariances_async(*this->submap_tree_, *this->submap_pc_,
+                                                                  this->params_.submap_covariance_neighbor_num)
+                    .wait();
                 algorithms::covariance::covariance_update_plane(*this->submap_pc_);
             }
         },

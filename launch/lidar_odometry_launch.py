@@ -3,6 +3,7 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
 import os
 import yaml
 
@@ -33,10 +34,25 @@ def generate_launch_description():
     package_dir = get_package_share_directory(package_name)
     param_yaml = os.path.join(package_dir, "config", "lidar_odometry.yaml")
     launch_args, node_args = declare_params_from_yaml(param_yaml, node_name)
-    launch_args.append(
-        DeclareLaunchArgument(
-            "point_topic", default_value="/os_cloud_node/points", description="source point cloud topic"
-        )
+    launch_args.extend(
+        [
+            DeclareLaunchArgument(
+                "point_topic",
+                default_value="/os_cloud_node/points",
+                description="source point cloud topic",
+            ),
+            DeclareLaunchArgument(
+                "lidar_frame_id",
+                default_value="os_sensor",
+                description="source point cloud frame id",
+            ),
+            DeclareLaunchArgument(
+                "rviz2",
+                default_value="true",
+                choices=['true', 'false'],
+                description="launch with rviz2",
+            ),
+        ]
     )
 
     nodes = [
@@ -49,8 +65,27 @@ def generate_launch_description():
             parameters=[node_args],
             remappings=[
                 ("points", LaunchConfiguration("point_topic")),
-            ]
+            ],
         ),
+        Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            arguments=["--x", "0.0"]
+            + ["--y", "0.0"]
+            + ["--z", "0.0"]
+            + ["--qx", "0.0"]
+            + ["--qy", "0.0"]
+            + ["--qz", "0.0"]
+            + ["--qw", "1.0"]
+            + ["--frame-id", "base_link"]
+            + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
+        ),
+        Node(
+            package="rviz2",
+            executable="rviz2",
+            arguments=["-d", os.path.join(package_dir, "rviz2", "rviz2.rviz")],
+            condition=IfCondition(LaunchConfiguration('rviz2'))
+            ),
     ]
 
     return LaunchDescription(launch_args + nodes)

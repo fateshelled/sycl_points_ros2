@@ -90,6 +90,11 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.gicp.inlier_ratio = this->declare_parameter<double>("gicp/inlier_ratio", 0.7);
     params.gicp.translation_eps = this->declare_parameter<double>("gicp/translation_eps", 1e-3);
     params.gicp.rotation_eps = this->declare_parameter<double>("gicp/rotation_eps", 1e-3);
+
+    const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust_loss", "NONE");
+    params.gicp.robust_loss = algorithms::registration::RobustLossType_from_string(robust_loss);
+    params.gicp.robust_threshold = this->declare_parameter<double>("gicp/robust_threshold", 1.0);
+
     params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
 
     {
@@ -179,6 +184,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
     // Build submap
     double dt_build_submap = 0.0;
+    bool update_submap = false;
     time_utils::measure_execution(
         [&]() {
             const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->preprocessed_pc_->size();
@@ -216,20 +222,24 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                                                   this->params_.submap_covariance_neighbor_num)
                     .wait();
                 algorithms::covariance::covariance_update_plane(*this->submap_pc_);
+                update_submap = true;
             }
         },
         dt_build_submap);
 
     // publish ROS2 message
     double dt_to_ros2_msg = 0.0;
-    auto pub_msgs = time_utils::measure_execution(
+    auto preprocessed_msg = time_utils::measure_execution(
+        [&]() { return std::move(toROS2msg(*this->preprocessed_pc_, msg->header)); }, dt_to_ros2_msg);
+    auto submap_msg = time_utils::measure_execution(
         [&]() {
-            auto preprocessed_msg = toROS2msg(*this->preprocessed_pc_, msg->header);
-
-            auto submap_msg = toROS2msg(*this->submap_pc_, msg->header);
-            submap_msg->header.frame_id = "odom";
-
-            return std::make_tuple(std::move(preprocessed_msg), std::move(submap_msg));
+            if (update_submap) {
+                auto submap_msg = toROS2msg(*this->submap_pc_, msg->header);
+                submap_msg->header.frame_id = "odom";
+                return std::move(submap_msg);
+            }
+            sensor_msgs::msg::PointCloud2::UniquePtr ret = nullptr;
+            return std::move(ret);
         },
         dt_to_ros2_msg);
 
@@ -237,11 +247,11 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     time_utils::measure_execution(
         [&]() {
             this->publish_odom(msg->header, this->odom_);
-            if (this->pub_preprocessed_->get_subscription_count() > 0) {
-                this->pub_preprocessed_->publish(std::move(std::get<0>(pub_msgs)));
+            if (preprocessed_msg != nullptr && this->pub_preprocessed_->get_subscription_count() > 0) {
+                this->pub_preprocessed_->publish(std::move(preprocessed_msg));
             }
-            if (this->pub_submap_->get_subscription_count() > 0) {
-                this->pub_submap_->publish(std::move(std::get<1>(pub_msgs)));
+            if (submap_msg != nullptr && this->pub_submap_->get_subscription_count() > 0) {
+                this->pub_submap_->publish(std::move(submap_msg));
             }
         },
         dt_publish);

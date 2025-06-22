@@ -93,7 +93,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
     const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust_loss", "NONE");
     params.gicp.robust_loss = algorithms::registration::RobustLossType_from_string(robust_loss);
-    params.gicp.robust_threshold = this->declare_parameter<double>("gicp/robust_threshold", 1.0);
+    params.gicp.robust_scale = this->declare_parameter<double>("gicp/robust_scale", 1.0);
 
     params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
 

@@ -39,7 +39,10 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 
     this->pub_preprocessed_ =
         this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::SensorDataQoS());
-    this->pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/submap", rclcpp::QoS(1));
+
+    auto submap_qos = rclcpp::QoS(1);
+    submap_qos.durability(rclcpp::DurabilityPolicy::TransientLocal);
+    this->pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/submap", submap_qos);
 
     this->pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/odom", rclcpp::QoS(10));
     this->pub_pose_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("sycl_lo/pose", rclcpp::QoS(10));
@@ -97,8 +100,9 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
     params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
 
+    params.odom_frame_id = this->declare_parameter<std::string>("odom_frame_id", "odom");
+    params.base_link_id = this->declare_parameter<std::string>("base_link_id", "base_link");
     {
-        // Ouster os0
         // x, y, z, qx, qy, qz, qw
         const auto T =
             this->declare_parameter<std::vector<double>>("T_base_link_to_lidar", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
@@ -141,18 +145,24 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
         },
         dt_preprocessing);
-
-    // compute covariances
-    double dt_covariance = 0.0;
+    // build KDTree
+    double dt_kdtree_build = 0.0;
     const auto src_tree = time_utils::measure_execution(
         [&]() {
             const auto tree =
                 sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
-            algorithms::covariance::compute_covariances_async(*tree, *this->preprocessed_pc_,
+            return tree;
+        },
+        dt_kdtree_build);
+
+    // compute covariances
+    double dt_covariance = 0.0;
+    time_utils::measure_execution(
+        [&]() {
+            algorithms::covariance::compute_covariances_async(*src_tree, *this->preprocessed_pc_,
                                                               this->params_.scan_covariance_neighbor_num)
                 .wait();
             algorithms::covariance::covariance_update_plane(*this->preprocessed_pc_);
-            return tree;
         },
         dt_covariance);
 
@@ -230,16 +240,16 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     // publish ROS2 message
     double dt_to_ros2_msg = 0.0;
     auto preprocessed_msg = time_utils::measure_execution(
-        [&]() { return std::move(toROS2msg(*this->preprocessed_pc_, msg->header)); }, dt_to_ros2_msg);
+        [&]() { return toROS2msg(*this->preprocessed_pc_, msg->header); }, dt_to_ros2_msg);
     auto submap_msg = time_utils::measure_execution(
         [&]() {
-            if (update_submap) {
+            if (true) {
                 auto submap_msg = toROS2msg(*this->submap_pc_, msg->header);
-                submap_msg->header.frame_id = "odom";
-                return std::move(submap_msg);
+                submap_msg->header.frame_id = this->params_.odom_frame_id;
+                return submap_msg;
             }
-            sensor_msgs::msg::PointCloud2::UniquePtr ret = nullptr;
-            return std::move(ret);
+            sensor_msgs::msg::PointCloud2::SharedPtr ret = nullptr;
+            return ret;
         },
         dt_to_ros2_msg);
 
@@ -248,16 +258,17 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         [&]() {
             this->publish_odom(msg->header, this->odom_);
             if (preprocessed_msg != nullptr && this->pub_preprocessed_->get_subscription_count() > 0) {
-                this->pub_preprocessed_->publish(std::move(preprocessed_msg));
+                this->pub_preprocessed_->publish(*preprocessed_msg);
             }
             if (submap_msg != nullptr && this->pub_submap_->get_subscription_count() > 0) {
-                this->pub_submap_->publish(std::move(submap_msg));
+                this->pub_submap_->publish(*submap_msg);
             }
         },
         dt_publish);
 
     RCLCPP_INFO(this->get_logger(), "fromROS2msg:         %9.2f us", dt_from_ros2_msg);
     RCLCPP_INFO(this->get_logger(), "Preprocessing:       %9.2f us", dt_preprocessing);
+    RCLCPP_INFO(this->get_logger(), "KDTree build:        %9.2f us", dt_kdtree_build);
     RCLCPP_INFO(this->get_logger(), "compute Covariances: %9.2f us", dt_covariance);
     RCLCPP_INFO(this->get_logger(), "Registration:        %9.2f us", dt_registration);
     RCLCPP_INFO(this->get_logger(), "Build submap:        %9.2f us", dt_build_submap);
@@ -268,8 +279,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom) {
     geometry_msgs::msg::TransformStamped tf;
     tf.header.stamp = header.stamp;
-    tf.header.frame_id = "odom";
-    tf.child_frame_id = "base_link";
+    tf.header.frame_id = this->params_.odom_frame_id;
+    tf.child_frame_id = this->params_.base_link_id;
 
     const auto odom_trans = odom.translation();
     tf.transform.translation.x = odom_trans.x();

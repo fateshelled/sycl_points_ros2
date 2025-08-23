@@ -31,4 +31,3 @@ lidar_odometry_node:
     gicp/robust_scale: 2.0
 
     gicp/verbose: true
-

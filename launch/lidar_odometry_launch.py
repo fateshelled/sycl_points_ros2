@@ -4,6 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
+from launch.actions import TimerAction
 import os
 import yaml
 
@@ -49,34 +50,68 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "rviz2",
                 default_value="true",
-                choices=['true', 'false'],
+                choices=["true", "false"],
                 description="launch with rviz2",
+            ),
+            DeclareLaunchArgument(
+                "odom_frame_id",
+                default_value="odom",
+                description="odom frame id",
+            ),
+            DeclareLaunchArgument(
+                "base_link_id",
+                default_value="base_link",
+                description="base_link frame id",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.x",
+                default_value="0.0",
+                description="static transform x from base_link to lidar_frame",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.y",
+                default_value="0.0",
+                description="static transform y from base_link to lidar_frame",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.z",
+                default_value="0.0",
+                description="static transform z from base_link to lidar_frame",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.qx",
+                default_value="0.0",
+                description="static transform qx from base_link to lidar_frame",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.qy",
+                default_value="0.0",
+                description="static transform qy from base_link to lidar_frame",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.qz",
+                default_value="0.0",
+                description="static transform qz from base_link to lidar_frame",
+            ),
+            DeclareLaunchArgument(
+                "base_link_to_lidar_frame.qw",
+                default_value="1.0",
+                description="static transform qw from base_link to lidar_frame",
             ),
         ]
     )
 
     nodes = [
         Node(
-            package=package_name,
-            executable=node_name,
-            name=node_name,
-            output="screen",
-            emulate_tty=True,
-            parameters=[node_args],
-            remappings=[
-                ("points", LaunchConfiguration("point_topic")),
-            ],
-        ),
-        Node(
             package="tf2_ros",
             executable="static_transform_publisher",
-            arguments=["--x", "0.0"]
-            + ["--y", "0.0"]
-            + ["--z", "0.0"]
-            + ["--qx", "0.0"]
-            + ["--qy", "0.0"]
-            + ["--qz", "0.0"]
-            + ["--qw", "1.0"]
+            arguments=["--x", LaunchConfiguration("base_link_to_lidar_frame.x")]
+            + ["--y", LaunchConfiguration("base_link_to_lidar_frame.y")]
+            + ["--z", LaunchConfiguration("base_link_to_lidar_frame.z")]
+            + ["--qx", LaunchConfiguration("base_link_to_lidar_frame.qx")]
+            + ["--qy", LaunchConfiguration("base_link_to_lidar_frame.qy")]
+            + ["--qz", LaunchConfiguration("base_link_to_lidar_frame.qz")]
+            + ["--qw", LaunchConfiguration("base_link_to_lidar_frame.qw")]
             + ["--frame-id", "base_link"]
             + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
         ),
@@ -84,8 +119,30 @@ def generate_launch_description():
             package="rviz2",
             executable="rviz2",
             arguments=["-d", os.path.join(package_dir, "rviz2", "rviz2.rviz")],
-            condition=IfCondition(LaunchConfiguration('rviz2'))
-            ),
+            condition=IfCondition(LaunchConfiguration("rviz2")),
+        ),
+        TimerAction(
+            period=1.0,
+            actions=[
+                Node(
+                    package=package_name,
+                    executable=node_name,
+                    name=node_name,
+                    output="screen",
+                    emulate_tty=True,
+                    parameters=[
+                        node_args,
+                        {
+                            "odom_frame_id": LaunchConfiguration("odom_frame_id"),
+                            "base_link_id": LaunchConfiguration("base_link_id"),
+                        },
+                    ],
+                    remappings=[
+                        ("points", LaunchConfiguration("point_topic")),
+                    ],
+                ),
+            ],
+        ),
     ]
 
     return LaunchDescription(launch_args + nodes)

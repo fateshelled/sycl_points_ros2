@@ -85,7 +85,9 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.keyframe_angle_threshold_degrees =
         this->declare_parameter<double>("keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
 
-    params.gicp.max_iterations = this->declare_parameter<double>("gicp/max_iterations", 20);
+    params.gicp_min_num_points = this->declare_parameter<int>("gicp/min_num_points", 100);
+
+    params.gicp.max_iterations = this->declare_parameter<int>("gicp/max_iterations", 20);
     params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", 1e-4);
     params.gicp.max_correspondence_distance = this->declare_parameter<double>("gicp/max_correspondence_distance", 2.0);
     params.gicp.adaptive_correspondence_distance =
@@ -97,6 +99,10 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust_loss", "NONE");
     params.gicp.robust_loss = algorithms::registration::RobustLossType_from_string(robust_loss);
     params.gicp.robust_scale = this->declare_parameter<double>("gicp/robust_scale", 1.0);
+
+    params.gicp.optimize_lm = this->declare_parameter<bool>("gicp/optimize_lm", false);
+    params.gicp.max_inner_iterations = this->declare_parameter<int>("gicp/max_inner_iterations", 10);
+    params.gicp.lambda_factor = this->declare_parameter<double>("gicp/lambda_factor", 10.0);
 
     params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
 
@@ -128,10 +134,16 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
     const auto timestamp = rclcpp::Time(msg->header.stamp).seconds();
+    const bool is_first_frame = (this->submap_pc_ == nullptr);
 
     double dt_from_ros2_msg = 0.0;
     time_utils::measure_execution([&]() { return fromROS2msg(*this->queue_ptr_, *msg, this->scan_pc_); },
                                   dt_from_ros2_msg);
+
+    if (this->scan_pc_->size() == 0) {
+        RCLCPP_WARN(this->get_logger(), "input point cloud is empty");
+        return;
+    }
 
     // preprocess
     double dt_preprocessing = 0.0;
@@ -143,8 +155,18 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             this->preprocess_filter_->box_filter(*this->scan_pc_, this->params_.scan_preprocess_box_filter_min,
                                                  this->params_.scan_preprocess_box_filter_max);
             this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
+            if (is_first_frame) {
+                sycl_points::algorithms::transform::transform(*this->preprocessed_pc_,
+                                                              this->params_.initial_pose.matrix());
+            }
         },
         dt_preprocessing);
+
+    if (this->preprocessed_pc_->size() <= this->params_.gicp_min_num_points) {
+        RCLCPP_WARN(this->get_logger(), "point cloud size is too small");
+        return;
+    }
+
     // build KDTree
     double dt_kdtree_build = 0.0;
     const auto src_tree = time_utils::measure_execution(
@@ -162,12 +184,13 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             algorithms::covariance::compute_covariances_async(*src_tree, *this->preprocessed_pc_,
                                                               this->params_.scan_covariance_neighbor_num)
                 .wait();
+            algorithms::covariance::compute_normals_from_covariances(*this->preprocessed_pc_);
             algorithms::covariance::covariance_update_plane(*this->preprocessed_pc_);
         },
         dt_covariance);
 
     // is first frame
-    if (this->submap_pc_ == nullptr) {
+    if (is_first_frame) {
         // copy to submap
         this->submap_pc_ = std::make_shared<PointCloudShared>(*this->preprocessed_pc_);
         this->submap_tree_ = src_tree;

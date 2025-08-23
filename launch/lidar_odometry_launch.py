@@ -103,17 +103,21 @@ def generate_launch_description():
 
     nodes = [
         Node(
-            package="tf2_ros",
-            executable="static_transform_publisher",
-            arguments=["--x", LaunchConfiguration("base_link_to_lidar_frame.x")]
-            + ["--y", LaunchConfiguration("base_link_to_lidar_frame.y")]
-            + ["--z", LaunchConfiguration("base_link_to_lidar_frame.z")]
-            + ["--qx", LaunchConfiguration("base_link_to_lidar_frame.qx")]
-            + ["--qy", LaunchConfiguration("base_link_to_lidar_frame.qy")]
-            + ["--qz", LaunchConfiguration("base_link_to_lidar_frame.qz")]
-            + ["--qw", LaunchConfiguration("base_link_to_lidar_frame.qw")]
-            + ["--frame-id", "base_link"]
-            + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
+            package=package_name,
+            executable=node_name,
+            name=node_name,
+            output="screen",
+            emulate_tty=True,
+            parameters=[
+                node_args,
+                {
+                    "odom_frame_id": LaunchConfiguration("odom_frame_id"),
+                    "base_link_id": LaunchConfiguration("base_link_id"),
+                },
+            ],
+            remappings=[
+                ("points", LaunchConfiguration("point_topic")),
+            ],
         ),
         Node(
             package="rviz2",
@@ -125,21 +129,17 @@ def generate_launch_description():
             period=1.0,
             actions=[
                 Node(
-                    package=package_name,
-                    executable=node_name,
-                    name=node_name,
-                    output="screen",
-                    emulate_tty=True,
-                    parameters=[
-                        node_args,
-                        {
-                            "odom_frame_id": LaunchConfiguration("odom_frame_id"),
-                            "base_link_id": LaunchConfiguration("base_link_id"),
-                        },
-                    ],
-                    remappings=[
-                        ("points", LaunchConfiguration("point_topic")),
-                    ],
+                    package="tf2_ros",
+                    executable="static_transform_publisher",
+                    arguments=["--x", LaunchConfiguration("base_link_to_lidar_frame.x")]
+                    + ["--y", LaunchConfiguration("base_link_to_lidar_frame.y")]
+                    + ["--z", LaunchConfiguration("base_link_to_lidar_frame.z")]
+                    + ["--qx", LaunchConfiguration("base_link_to_lidar_frame.qx")]
+                    + ["--qy", LaunchConfiguration("base_link_to_lidar_frame.qy")]
+                    + ["--qz", LaunchConfiguration("base_link_to_lidar_frame.qz")]
+                    + ["--qw", LaunchConfiguration("base_link_to_lidar_frame.qw")]
+                    + ["--frame-id", "base_link"]
+                    + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
                 ),
             ],
         ),

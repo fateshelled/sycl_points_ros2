@@ -38,6 +38,7 @@ public:
         float keyframe_distance_threshold = 2.0f;
         float keyframe_angle_threshold_degrees = 20.0f;
 
+        size_t gicp_min_num_points = 100;
         algorithms::registration::RegistrationParams gicp;
 
         std::string odom_frame_id = "odom";

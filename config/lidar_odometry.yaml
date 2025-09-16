@@ -28,9 +28,9 @@ lidar_odometry_node:
     gicp/inlier_ratio: 0.7
     gicp/translation_eps: 1e-3
     gicp/rotation_eps: 1e-3
-    gicp/robust_loss: HUBER  # NONE, HUBER, TUKEY, CAUCHY, GERMAN_MCCLURE
+    gicp/robust_loss: HUBER  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
     gicp/robust_scale: 2.0
     gicp/optimize_lm: false
     gicp/max_inner_iterations: 10
     gicp/lambda_factor: 10.0
-    gicp/verbose: true
+    gicp/verbose: false

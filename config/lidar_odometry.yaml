@@ -8,14 +8,20 @@ lidar_odometry_node:
     # x, y, z, qx, qy, qz, qw
     initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
-    scan/covariance/neighbor_num: 10
+    scan/covariance/neighbor_num: 20
     scan/preprocess/box_filter/max: 50.0
     scan/preprocess/box_filter/min: 2.0
     scan/preprocess/random_sampling/num: 1000
-    scan/voxel_size: 0.5
+    scan/downsampling/voxel/enable: false
+    scan/downsampling/voxel/voxel_size: 0.5
+    scan/downsampling/polar/enable: true
+    scan/downsampling/polar/distance_size: 5.0  # meters
+    scan/downsampling/polar/elevation_size: 0.05235987755982989 # 3 degrees
+    scan/downsampling/polar/azimuth_size: 0.05235987755982989   # 3 degrees
+    scan/downsampling/polar/coord_system: CAMERA # CAMERA or LIDAR
 
-    submap/covariance/neighbor_num: 10
-    submap/voxel_size: 1.0
+    submap/covariance/neighbor_num: 20
+    submap/downsampling/voxel/voxel_size: 1.0
     keyframe/angle_threshold_degrees: 20.0
     keyframe/distance_threshold: 2.0
     keyframe/inlier_ratio_threshold: 0.7
@@ -28,8 +34,8 @@ lidar_odometry_node:
     gicp/inlier_ratio: 0.7
     gicp/translation_eps: 1e-3
     gicp/rotation_eps: 1e-3
-    gicp/robust_loss: HUBER  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
-    gicp/robust_scale: 2.0
+    gicp/robust_loss: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
+    gicp/robust_scale: 10.0
     gicp/optimize_lm: false
     gicp/max_inner_iterations: 10
     gicp/lambda_factor: 10.0

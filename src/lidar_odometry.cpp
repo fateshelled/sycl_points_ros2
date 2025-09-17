@@ -27,10 +27,20 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 
     // Point cloud processor
     this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
-    this->voxel_filter_ =
-        std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, this->params_.scan_voxel_size);
-    this->submap_voxel_filter_ =
-        std::make_shared<algorithms::filter::VoxelGrid>(*this->queue_ptr_, this->params_.submap_voxel_size);
+    if (this->params_.scan_downsampling_voxel_enable) {
+        this->voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
+            *this->queue_ptr_, this->params_.scan_downsampling_voxel_size);
+    }
+    if (this->params_.scan_downsampling_polar_enable) {
+        const auto coord_system =
+            algorithms::coordinate_system_from_string(this->params_.scan_downsampling_polar_coord_system);
+        this->polar_filter_ = std::make_shared<algorithms::filter::PolarGrid>(
+            *this->queue_ptr_, this->params_.scan_downsampling_polar_distance_size,
+            this->params_.scan_downsampling_polar_elevation_size, this->params_.scan_downsampling_polar_azimuth_size,
+            coord_system);
+    }
+    this->submap_voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
+        *this->queue_ptr_, this->params_.submap_downsampling_voxel_size);
     this->gicp_ = std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->params_.gicp);
 
     // pub/sub
@@ -46,6 +56,9 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 
     this->pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/odom", rclcpp::QoS(10));
     this->pub_pose_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("sycl_lo/pose", rclcpp::QoS(10));
+    this->pub_keyframe_pose_ =
+        this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/keyframe/pose", rclcpp::QoS(10));
+
     this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
     RCLCPP_INFO(this->get_logger(), "Subscribe PointCloud: %s", this->sub_pc_->get_topic_name());
@@ -53,6 +66,7 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     RCLCPP_INFO(this->get_logger(), "Publish Submap PointCloud: %s", this->pub_submap_->get_topic_name());
     RCLCPP_INFO(this->get_logger(), "Publish Odometry: %s", this->pub_odom_->get_topic_name());
     RCLCPP_INFO(this->get_logger(), "Publish Pose: %s", this->pub_pose_->get_topic_name());
+    RCLCPP_INFO(this->get_logger(), "Publish Keyframe Pose: %s", this->pub_keyframe_pose_->get_topic_name());
 }
 
 /// @brief destructor
@@ -64,7 +78,21 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.sycl_device_vendor = this->declare_parameter<std::string>("sycl/device_vendor", params.sycl_device_vendor);
     params.sycl_device_type = this->declare_parameter<std::string>("sycl/device_type", params.sycl_device_type);
 
-    params.scan_voxel_size = this->declare_parameter<double>("scan/voxel_size", params.scan_voxel_size);
+    params.scan_downsampling_voxel_enable =
+        this->declare_parameter<bool>("scan/downsampling/voxel/enable", params.scan_downsampling_voxel_enable);
+    params.scan_downsampling_voxel_size = this->declare_parameter<double>("scan/downsampling/voxel/voxel_size", params.scan_downsampling_voxel_size);
+
+    params.scan_downsampling_polar_enable =
+        this->declare_parameter<bool>("scan/downsampling/polar/enable", params.scan_downsampling_polar_enable);
+    params.scan_downsampling_polar_distance_size =
+        this->declare_parameter<double>("scan/downsampling/polar/distance_size", params.scan_downsampling_polar_distance_size);
+    params.scan_downsampling_polar_elevation_size =
+        this->declare_parameter<double>("scan/downsampling/polar/elevation_size", params.scan_downsampling_polar_elevation_size);
+    params.scan_downsampling_polar_azimuth_size =
+        this->declare_parameter<double>("scan/downsampling/polar/azimuth_size", params.scan_downsampling_polar_azimuth_size);
+    params.scan_downsampling_polar_coord_system =
+        this->declare_parameter<std::string>("scan/downsampling/polar/coord_system", params.scan_downsampling_polar_coord_system);
+
     params.scan_covariance_neighbor_num =
         this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
     params.scan_preprocess_box_filter_min =
@@ -74,7 +102,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.scan_preprocess_random_sampling_num =
         this->declare_parameter<int>("scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
 
-    params.submap_voxel_size = this->declare_parameter<double>("submap/voxel_size", params.submap_voxel_size);
+    params.submap_downsampling_voxel_size = this->declare_parameter<double>("submap/downsampling/voxel/voxel_size", params.submap_downsampling_voxel_size);
     params.submap_covariance_neighbor_num =
         this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
 
@@ -154,7 +182,18 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             }
             this->preprocess_filter_->box_filter(*this->scan_pc_, this->params_.scan_preprocess_box_filter_min,
                                                  this->params_.scan_preprocess_box_filter_max);
-            this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
+            if (this->params_.scan_downsampling_polar_enable) {
+                this->polar_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
+                if (this->params_.scan_downsampling_voxel_enable) {
+                    this->voxel_filter_->downsampling(*this->preprocessed_pc_, *this->preprocessed_pc_);
+                }
+            } else {
+                if (this->params_.scan_downsampling_voxel_enable) {
+                    this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
+                } else {
+                    *this->preprocessed_pc_ = *this->scan_pc_;
+                }
+            }
             if (is_first_frame) {
                 sycl_points::algorithms::transform::transform(*this->preprocessed_pc_,
                                                               this->params_.initial_pose.matrix());
@@ -230,7 +269,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
             // calculate moving distance and angle
             const auto distance = delta_pose.translation().norm();
-            const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (float)(180.0 / M_PI);
+            const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (180.0f / M_PIf);
 
             // update submap
             if (distance >= this->params_.keyframe_distance_threshold ||
@@ -282,6 +321,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             this->publish_odom(msg->header, this->odom_);
             if (preprocessed_msg != nullptr && this->pub_preprocessed_->get_subscription_count() > 0) {
                 this->pub_preprocessed_->publish(*preprocessed_msg);
+            }
+            if (update_submap) {
+                this->publish_keyframe_pose(msg->header, this->last_keyframe_pose_);
             }
             if (submap_msg != nullptr && this->pub_submap_->get_subscription_count() > 0) {
                 this->pub_submap_->publish(*submap_msg);
@@ -335,6 +377,23 @@ void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const 
     this->pub_odom_->publish(odom_msg);
 }
 
+void LiDAROdometryNode::publish_keyframe_pose(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom) {
+    const auto odom_trans = odom.translation();
+    const Eigen::Quaternionf odom_quat(odom.rotation());
+
+    nav_msgs::msg::Odometry odom_msg;
+    odom_msg.header = header;
+    odom_msg.header.frame_id = this->params_.odom_frame_id;
+    odom_msg.child_frame_id = this->params_.base_link_id;
+    odom_msg.pose.pose.position.x = odom_trans.x();
+    odom_msg.pose.pose.position.y = odom_trans.y();
+    odom_msg.pose.pose.position.z = odom_trans.z();
+    odom_msg.pose.pose.orientation.x = odom_quat.x();
+    odom_msg.pose.pose.orientation.y = odom_quat.y();
+    odom_msg.pose.pose.orientation.z = odom_quat.z();
+    odom_msg.pose.pose.orientation.w = odom_quat.w();
+    this->pub_keyframe_pose_->publish(odom_msg);
+}
 }  // namespace ros2
 }  // namespace sycl_points
 

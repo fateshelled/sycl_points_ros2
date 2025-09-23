@@ -27,7 +27,7 @@ lidar_odometry_node:
     keyframe/inlier_ratio_threshold: 0.7
 
     gicp/min_num_points: 100
-    gicp/max_iterations: 20
+    gicp/max_iterations: 15
     gicp/lambda: 1e-4
     gicp/max_correspondence_distance: 2.0
     gicp/adaptive_correspondence_distance: false
@@ -35,6 +35,7 @@ lidar_odometry_node:
     gicp/translation_eps: 1e-3
     gicp/rotation_eps: 1e-6
     gicp/robust_loss: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
+    gicp/color_weight: 0.0
     gicp/robust_scale: 10.0
     gicp/optimize_lm: false
     gicp/max_inner_iterations: 10

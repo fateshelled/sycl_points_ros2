@@ -80,18 +80,19 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
     params.scan_downsampling_voxel_enable =
         this->declare_parameter<bool>("scan/downsampling/voxel/enable", params.scan_downsampling_voxel_enable);
-    params.scan_downsampling_voxel_size = this->declare_parameter<double>("scan/downsampling/voxel/voxel_size", params.scan_downsampling_voxel_size);
+    params.scan_downsampling_voxel_size =
+        this->declare_parameter<double>("scan/downsampling/voxel/voxel_size", params.scan_downsampling_voxel_size);
 
     params.scan_downsampling_polar_enable =
         this->declare_parameter<bool>("scan/downsampling/polar/enable", params.scan_downsampling_polar_enable);
-    params.scan_downsampling_polar_distance_size =
-        this->declare_parameter<double>("scan/downsampling/polar/distance_size", params.scan_downsampling_polar_distance_size);
-    params.scan_downsampling_polar_elevation_size =
-        this->declare_parameter<double>("scan/downsampling/polar/elevation_size", params.scan_downsampling_polar_elevation_size);
-    params.scan_downsampling_polar_azimuth_size =
-        this->declare_parameter<double>("scan/downsampling/polar/azimuth_size", params.scan_downsampling_polar_azimuth_size);
-    params.scan_downsampling_polar_coord_system =
-        this->declare_parameter<std::string>("scan/downsampling/polar/coord_system", params.scan_downsampling_polar_coord_system);
+    params.scan_downsampling_polar_distance_size = this->declare_parameter<double>(
+        "scan/downsampling/polar/distance_size", params.scan_downsampling_polar_distance_size);
+    params.scan_downsampling_polar_elevation_size = this->declare_parameter<double>(
+        "scan/downsampling/polar/elevation_size", params.scan_downsampling_polar_elevation_size);
+    params.scan_downsampling_polar_azimuth_size = this->declare_parameter<double>(
+        "scan/downsampling/polar/azimuth_size", params.scan_downsampling_polar_azimuth_size);
+    params.scan_downsampling_polar_coord_system = this->declare_parameter<std::string>(
+        "scan/downsampling/polar/coord_system", params.scan_downsampling_polar_coord_system);
 
     params.scan_covariance_neighbor_num =
         this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
@@ -102,7 +103,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.scan_preprocess_random_sampling_num =
         this->declare_parameter<int>("scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
 
-    params.submap_downsampling_voxel_size = this->declare_parameter<double>("submap/downsampling/voxel/voxel_size", params.submap_downsampling_voxel_size);
+    params.submap_downsampling_voxel_size =
+        this->declare_parameter<double>("submap/downsampling/voxel/voxel_size", params.submap_downsampling_voxel_size);
     params.submap_covariance_neighbor_num =
         this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
 
@@ -127,6 +129,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust_loss", "NONE");
     params.gicp.robust_loss = algorithms::registration::RobustLossType_from_string(robust_loss);
     params.gicp.robust_scale = this->declare_parameter<double>("gicp/robust_scale", 1.0);
+    params.gicp.color_weight = this->declare_parameter<double>("gicp/color_weight", 0.0f);
 
     params.gicp.optimize_lm = this->declare_parameter<bool>("gicp/optimize_lm", false);
     params.gicp.max_inner_iterations = this->declare_parameter<int>("gicp/max_inner_iterations", 10);
@@ -331,6 +334,16 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         },
         dt_publish);
 
+    double total_time = 0.0;
+    total_time += dt_from_ros2_msg;
+    total_time += dt_preprocessing;
+    total_time += dt_kdtree_build;
+    total_time += dt_covariance;
+    total_time += dt_registration;
+    total_time += dt_build_submap;
+    total_time += dt_to_ros2_msg;
+    total_time += dt_publish;
+
     RCLCPP_INFO(this->get_logger(), "fromROS2msg:         %9.2f us", dt_from_ros2_msg);
     RCLCPP_INFO(this->get_logger(), "Preprocessing:       %9.2f us", dt_preprocessing);
     RCLCPP_INFO(this->get_logger(), "KDTree build:        %9.2f us", dt_kdtree_build);
@@ -339,6 +352,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     RCLCPP_INFO(this->get_logger(), "Build submap:        %9.2f us", dt_build_submap);
     RCLCPP_INFO(this->get_logger(), "toROS2msg:           %9.2f us", dt_to_ros2_msg);
     RCLCPP_INFO(this->get_logger(), "publish:             %9.2f us", dt_publish);
+    RCLCPP_INFO(this->get_logger(), "total:               %9.2f us", total_time);
+    RCLCPP_INFO(this->get_logger(), "");
+
 }
 
 void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom) {

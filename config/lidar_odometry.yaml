@@ -21,6 +21,7 @@ lidar_odometry_node:
     scan/downsampling/polar/coord_system: CAMERA # CAMERA or LIDAR
 
     submap/covariance/neighbor_num: 20
+    submap/color_gradient/neighbor_num: 10
     submap/downsampling/voxel/voxel_size: 1.0
     keyframe/angle_threshold_degrees: 20.0
     keyframe/distance_threshold: 2.0
@@ -32,12 +33,13 @@ lidar_odometry_node:
     gicp/max_correspondence_distance: 2.0
     gicp/adaptive_correspondence_distance: false
     gicp/inlier_ratio: 0.7
-    gicp/translation_eps: 1e-3
-    gicp/rotation_eps: 1e-6
-    gicp/robust_loss: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
-    gicp/color_weight: 0.0
-    gicp/robust_scale: 10.0
-    gicp/optimize_lm: false
-    gicp/max_inner_iterations: 10
-    gicp/lambda_factor: 10.0
+    gicp/criteria/translation: 1e-3
+    gicp/criteria/rotation: 1e-6
+    gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
+    gicp/robust/scale: 10.0
+    gicp/photometric/enable: false
+    gicp/photometric/photometric_weight: 0.2
+    gicp/lm/enable: false
+    gicp/lm/max_inner_iterations: 10
+    gicp/lm/lambda_factor: 10.0
     gicp/verbose: false

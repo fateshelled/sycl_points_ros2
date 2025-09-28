@@ -1,6 +1,7 @@
 #include "sycl_points_ros2/lidar_odometry.hpp"
 
 #include <rclcpp_components/register_node_macro.hpp>
+#include <sycl_points/algorithms/color_gradient.hpp>
 #include <sycl_points/algorithms/covariance.hpp>
 #include <sycl_points/ros2/convert.hpp>
 #include <sycl_points/utils/time_utils.hpp>
@@ -24,6 +25,9 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // set Initial pose
     this->odom_ = this->params_.initial_pose;
     this->last_keyframe_pose_ = this->params_.initial_pose;
+
+    this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+    this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
 
     // Point cloud processor
     this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
@@ -107,6 +111,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         this->declare_parameter<double>("submap/downsampling/voxel/voxel_size", params.submap_downsampling_voxel_size);
     params.submap_covariance_neighbor_num =
         this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
+    params.submap_color_gradient_neighbor_num =
+        this->declare_parameter<int>("submap/color_gradient/neighbor_num", params.submap_color_gradient_neighbor_num);
 
     params.keyframe_inlier_ratio_threshold =
         this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
@@ -123,17 +129,18 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.gicp.adaptive_correspondence_distance =
         this->declare_parameter<bool>("gicp/adaptive_correspondence_distance", true);
     params.gicp.inlier_ratio = this->declare_parameter<double>("gicp/inlier_ratio", 0.7);
-    params.gicp.translation_eps = this->declare_parameter<double>("gicp/translation_eps", 1e-3);
-    params.gicp.rotation_eps = this->declare_parameter<double>("gicp/rotation_eps", 1e-3);
+    params.gicp.crireria.translation = this->declare_parameter<double>("gicp/crireria/translation", 1e-3);
+    params.gicp.crireria.rotation = this->declare_parameter<double>("gicp/crireria/rotation", 1e-3);
 
-    const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust_loss", "NONE");
-    params.gicp.robust_loss = algorithms::registration::RobustLossType_from_string(robust_loss);
-    params.gicp.robust_scale = this->declare_parameter<double>("gicp/robust_scale", 1.0);
-    params.gicp.color_weight = this->declare_parameter<double>("gicp/color_weight", 0.0f);
+    const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust/type", "NONE");
+    params.gicp.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
+    params.gicp.robust.scale = this->declare_parameter<double>("gicp/robust/scale", 1.0);
+    params.gicp.photometric.enable = this->declare_parameter<bool>("gicp/photometric/enable", false);
+    params.gicp.photometric.photometric_weight = this->declare_parameter<double>("gicp/photometric/weight", 0.0f);
 
-    params.gicp.optimize_lm = this->declare_parameter<bool>("gicp/optimize_lm", false);
-    params.gicp.max_inner_iterations = this->declare_parameter<int>("gicp/max_inner_iterations", 10);
-    params.gicp.lambda_factor = this->declare_parameter<double>("gicp/lambda_factor", 10.0);
+    params.gicp.lm.enable = this->declare_parameter<bool>("gicp/lm/enable", false);
+    params.gicp.lm.max_inner_iterations = this->declare_parameter<int>("gicp/lm/max_inner_iterations", 10);
+    params.gicp.lm.lambda_factor = this->declare_parameter<double>("gicp/lm/lambda_factor", 10.0);
 
     params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
 
@@ -180,9 +187,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_preprocessing = 0.0;
     time_utils::measure_execution(
         [&]() {
-            if (this->preprocessed_pc_ == nullptr) {
-                this->preprocessed_pc_ = std::make_shared<PointCloudShared>(*this->queue_ptr_);
-            }
             this->preprocess_filter_->box_filter(*this->scan_pc_, this->params_.scan_preprocess_box_filter_min,
                                                  this->params_.scan_preprocess_box_filter_max);
             if (this->params_.scan_downsampling_polar_enable) {
@@ -223,10 +227,12 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_covariance = 0.0;
     time_utils::measure_execution(
         [&]() {
-            algorithms::covariance::compute_covariances_async(*src_tree, *this->preprocessed_pc_,
-                                                              this->params_.scan_covariance_neighbor_num)
+            src_tree
+                ->knn_search_async(*this->preprocessed_pc_, this->params_.scan_covariance_neighbor_num,
+                                   this->knn_result_)
                 .wait();
-            algorithms::covariance::compute_normals_from_covariances(*this->preprocessed_pc_);
+            algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_).wait();
+            algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_).wait();
             algorithms::covariance::covariance_update_plane(*this->preprocessed_pc_);
         },
         dt_covariance);
@@ -236,6 +242,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         // copy to submap
         this->submap_pc_ = std::make_shared<PointCloudShared>(*this->preprocessed_pc_);
         this->submap_tree_ = src_tree;
+        if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
+            algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_, this->knn_result_).wait();
+        }
         return;
     }
 
@@ -293,10 +302,26 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 this->submap_tree_ =
                     sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
 
-                algorithms::covariance::compute_covariances_async(*this->submap_tree_, *this->submap_pc_,
-                                                                  this->params_.submap_covariance_neighbor_num)
+                this->submap_tree_
+                    ->knn_search_async(*this->submap_pc_, this->params_.submap_covariance_neighbor_num,
+                                       this->knn_result_)
                     .wait();
+
+                algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_).wait();
+                algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_).wait();
                 algorithms::covariance::covariance_update_plane(*this->submap_pc_);
+
+                if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
+                    if (this->params_.submap_covariance_neighbor_num !=
+                        this->params_.submap_color_gradient_neighbor_num) {
+                        this->submap_tree_
+                            ->knn_search_async(*this->submap_pc_, this->params_.submap_color_gradient_neighbor_num,
+                                               this->knn_result_)
+                            .wait();
+                    }
+                    algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_, this->knn_result_)
+                        .wait();
+                }
                 update_submap = true;
             }
         },
@@ -354,7 +379,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     RCLCPP_INFO(this->get_logger(), "publish:             %9.2f us", dt_publish);
     RCLCPP_INFO(this->get_logger(), "total:               %9.2f us", total_time);
     RCLCPP_INFO(this->get_logger(), "");
-
 }
 
 void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom) {

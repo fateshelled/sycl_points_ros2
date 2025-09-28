@@ -41,6 +41,7 @@ public:
 
         float submap_downsampling_voxel_size = 1.0f;
         int32_t submap_covariance_neighbor_num = 10;
+        int32_t submap_color_gradient_neighbor_num = 10;
         float keyframe_inlier_ratio_threshold = 0.7f;
         float keyframe_distance_threshold = 2.0f;
         float keyframe_angle_threshold_degrees = 20.0f;
@@ -70,6 +71,7 @@ private:
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
     PointCloudShared::Ptr submap_pc_ = nullptr;
     algorithms::knn_search::KDTree::Ptr submap_tree_ = nullptr;
+    algorithms::knn_search::KNNResult knn_result_;
 
     algorithms::filter::PreprocessFilter::Ptr preprocess_filter_ = nullptr;
     algorithms::filter::VoxelGrid::Ptr voxel_filter_ = nullptr;

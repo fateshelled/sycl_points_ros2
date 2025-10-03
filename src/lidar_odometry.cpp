@@ -22,6 +22,9 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     this->queue_ptr_ = std::make_shared<sycl_utils::DeviceQueue>(dev);
     this->queue_ptr_->print_device_info();
 
+    // initialize buffer
+    this->msg_data_buffer_ = std::make_shared<shared_vector<uint8_t>>(*this->queue_ptr_->ptr);
+
     // set Initial pose
     this->odom_ = this->params_.initial_pose;
     this->last_keyframe_pose_ = this->params_.initial_pose;
@@ -74,7 +77,32 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 }
 
 /// @brief destructor
-LiDAROdometryNode::~LiDAROdometryNode() {}
+LiDAROdometryNode::~LiDAROdometryNode() {
+    // processing time log
+    RCLCPP_INFO(this->get_logger(), "");
+    RCLCPP_INFO(this->get_logger(), "MAX processing time");
+    for (auto& item : this->processing_times_) {
+        const double max = *std::max_element(item.second.begin(), item.second.end());
+        RCLCPP_INFO(this->get_logger(), "%s %9.2f us", item.first.c_str(), max);
+    }
+
+    RCLCPP_INFO(this->get_logger(), "");
+    RCLCPP_INFO(this->get_logger(), "MEAN processing time");
+    for (auto& item : this->processing_times_) {
+        const double avg =
+            std::accumulate(item.second.begin(), item.second.end(), 0.0) / static_cast<double>(item.second.size());
+        RCLCPP_INFO(this->get_logger(), "%s %9.2f us", item.first.c_str(), avg);
+    }
+
+    RCLCPP_INFO(this->get_logger(), "");
+    RCLCPP_INFO(this->get_logger(), "MEDIAN processing time");
+    for (auto& item : this->processing_times_) {
+        std::sort(item.second.begin(), item.second.end());
+        const double median = item.second[item.second.size() / 2];
+        RCLCPP_INFO(this->get_logger(), "%s %9.2f us", item.first.c_str(), median);
+    }
+    RCLCPP_INFO(this->get_logger(), "");
+}
 
 LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     LiDAROdometryNode::Parameters params;
@@ -175,8 +203,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     const bool is_first_frame = (this->submap_pc_ == nullptr);
 
     double dt_from_ros2_msg = 0.0;
-    time_utils::measure_execution([&]() { return fromROS2msg(*this->queue_ptr_, *msg, this->scan_pc_); },
-                                  dt_from_ros2_msg);
+    time_utils::measure_execution(
+        [&]() { return fromROS2msg(*this->queue_ptr_, *msg, this->scan_pc_, this->msg_data_buffer_); },
+        dt_from_ros2_msg);
 
     if (this->scan_pc_->size() == 0) {
         RCLCPP_WARN(this->get_logger(), "input point cloud is empty");
@@ -369,15 +398,25 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     total_time += dt_to_ros2_msg;
     total_time += dt_publish;
 
-    RCLCPP_INFO(this->get_logger(), "fromROS2msg:         %9.2f us", dt_from_ros2_msg);
-    RCLCPP_INFO(this->get_logger(), "Preprocessing:       %9.2f us", dt_preprocessing);
-    RCLCPP_INFO(this->get_logger(), "KDTree build:        %9.2f us", dt_kdtree_build);
-    RCLCPP_INFO(this->get_logger(), "compute Covariances: %9.2f us", dt_covariance);
-    RCLCPP_INFO(this->get_logger(), "Registration:        %9.2f us", dt_registration);
-    RCLCPP_INFO(this->get_logger(), "Build submap:        %9.2f us", dt_build_submap);
-    RCLCPP_INFO(this->get_logger(), "toROS2msg:           %9.2f us", dt_to_ros2_msg);
-    RCLCPP_INFO(this->get_logger(), "publish:             %9.2f us", dt_publish);
-    RCLCPP_INFO(this->get_logger(), "total:               %9.2f us", total_time);
+    this->add_delta_time("1. fromROS2msg:         ", dt_from_ros2_msg);
+    this->add_delta_time("2. Preprocessing:       ", dt_preprocessing);
+    this->add_delta_time("3. KDTree build:        ", dt_kdtree_build);
+    this->add_delta_time("4. compute Covariances: ", dt_covariance);
+    this->add_delta_time("5. Registration:        ", dt_registration);
+    this->add_delta_time("6. Build submap:        ", dt_build_submap);
+    this->add_delta_time("7. toROS2msg:           ", dt_to_ros2_msg);
+    this->add_delta_time("8. publish:             ", dt_publish);
+    this->add_delta_time("9. total:               ", total_time);
+
+    RCLCPP_INFO(this->get_logger(), "1. fromROS2msg:         %9.2f us", dt_from_ros2_msg);
+    RCLCPP_INFO(this->get_logger(), "2. Preprocessing:       %9.2f us", dt_preprocessing);
+    RCLCPP_INFO(this->get_logger(), "3. KDTree build:        %9.2f us", dt_kdtree_build);
+    RCLCPP_INFO(this->get_logger(), "4. compute Covariances: %9.2f us", dt_covariance);
+    RCLCPP_INFO(this->get_logger(), "5. Registration:        %9.2f us", dt_registration);
+    RCLCPP_INFO(this->get_logger(), "6. Build submap:        %9.2f us", dt_build_submap);
+    RCLCPP_INFO(this->get_logger(), "7. toROS2msg:           %9.2f us", dt_to_ros2_msg);
+    RCLCPP_INFO(this->get_logger(), "8. publish:             %9.2f us", dt_publish);
+    RCLCPP_INFO(this->get_logger(), "9. total:               %9.2f us", total_time);
     RCLCPP_INFO(this->get_logger(), "");
 }
 

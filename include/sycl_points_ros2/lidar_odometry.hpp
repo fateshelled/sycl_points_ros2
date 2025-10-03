@@ -7,10 +7,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sycl_points/algorithms/knn_search.hpp>
+#include <sycl_points/algorithms/polar_downsampling.hpp>
 #include <sycl_points/algorithms/preprocess_filter.hpp>
 #include <sycl_points/algorithms/registration.hpp>
 #include <sycl_points/algorithms/voxel_downsampling.hpp>
-#include <sycl_points/algorithms/polar_downsampling.hpp>
 #include <sycl_points/utils/sycl_utils.hpp>
 
 namespace sycl_points {
@@ -67,6 +67,7 @@ private:
 
     sycl_utils::DeviceQueue::Ptr queue_ptr_ = nullptr;
 
+    sycl_points::shared_vector_ptr<uint8_t> msg_data_buffer_ = nullptr;
     PointCloudShared::Ptr scan_pc_ = nullptr;
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
     PointCloudShared::Ptr submap_pc_ = nullptr;
@@ -83,6 +84,15 @@ private:
     Eigen::Isometry3f last_keyframe_pose_;
 
     Parameters params_;
+
+    std::map<std::string, std::vector<double>> processing_times_;
+    void add_delta_time(const std::string& name, double dt) {
+        if (this->processing_times_.count(name) > 0) {
+            this->processing_times_[name].push_back(dt);
+        } else {
+            this->processing_times_[name] = {dt};
+        }
+    }
 
     Parameters get_parameters();
     void point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);

@@ -35,6 +35,7 @@ public:
         std::string scan_downsampling_polar_coord_system = "CAMERA";
 
         int32_t scan_covariance_neighbor_num = 10;
+        bool scan_preprocess_box_filter_enable = true;
         float scan_preprocess_box_filter_min = 2.0f;
         float scan_preprocess_box_filter_max = 50.0f;
         int32_t scan_preprocess_random_sampling_num = 1000;

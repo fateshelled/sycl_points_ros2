@@ -9,6 +9,7 @@ lidar_odometry_node:
     initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
     scan/covariance/neighbor_num: 20
+    scan/preprocess/box_filter/enable: true
     scan/preprocess/box_filter/max: 50.0
     scan/preprocess/box_filter/min: 2.0
     scan/preprocess/random_sampling/num: 1000

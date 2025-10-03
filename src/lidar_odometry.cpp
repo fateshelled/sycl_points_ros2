@@ -128,6 +128,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
     params.scan_covariance_neighbor_num =
         this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
+    params.scan_preprocess_box_filter_enable =
+        this->declare_parameter<bool>("scan/preprocess/box_filter/enable", params.scan_preprocess_box_filter_enable);
     params.scan_preprocess_box_filter_min =
         this->declare_parameter<double>("scan/preprocess/box_filter/min", params.scan_preprocess_box_filter_min);
     params.scan_preprocess_box_filter_max =
@@ -216,8 +218,11 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_preprocessing = 0.0;
     time_utils::measure_execution(
         [&]() {
-            this->preprocess_filter_->box_filter(*this->scan_pc_, this->params_.scan_preprocess_box_filter_min,
-                                                 this->params_.scan_preprocess_box_filter_max);
+            // box filter -> polar grid -> voxel grid
+            if (this->params_.scan_preprocess_box_filter_enable) {
+                this->preprocess_filter_->box_filter(*this->scan_pc_, this->params_.scan_preprocess_box_filter_min,
+                                                     this->params_.scan_preprocess_box_filter_max);
+            }
             if (this->params_.scan_downsampling_polar_enable) {
                 this->polar_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
                 if (this->params_.scan_downsampling_voxel_enable) {
@@ -227,7 +232,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 if (this->params_.scan_downsampling_voxel_enable) {
                     this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
                 } else {
-                    *this->preprocessed_pc_ = *this->scan_pc_;
+                    *this->preprocessed_pc_ = *this->scan_pc_; // copy
                 }
             }
             if (is_first_frame) {

@@ -46,6 +46,7 @@ public:
         float keyframe_inlier_ratio_threshold = 0.7f;
         float keyframe_distance_threshold = 2.0f;
         float keyframe_angle_threshold_degrees = 20.0f;
+        float keyframe_time_threshold_seconds = 1.0f;
 
         size_t gicp_min_num_points = 100;
         algorithms::registration::RegistrationParams gicp;
@@ -83,6 +84,7 @@ private:
 
     Eigen::Isometry3f odom_;
     Eigen::Isometry3f last_keyframe_pose_;
+    double last_keyframe_time_;
 
     Parameters params_;
 

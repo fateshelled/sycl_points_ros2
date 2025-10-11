@@ -28,6 +28,7 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // set Initial pose
     this->odom_ = this->params_.initial_pose;
     this->last_keyframe_pose_ = this->params_.initial_pose;
+    this->last_keyframe_time_ = -1.0;
 
     this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
     this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
@@ -150,6 +151,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         this->declare_parameter<double>("keyframe/distance_threshold", params.keyframe_distance_threshold);
     params.keyframe_angle_threshold_degrees =
         this->declare_parameter<double>("keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
+    params.keyframe_time_threshold_seconds =
+        this->declare_parameter<double>("keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
 
     params.gicp_min_num_points = this->declare_parameter<int>("gicp/min_num_points", 100);
 
@@ -201,7 +204,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 }
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
-    const auto timestamp = rclcpp::Time(msg->header.stamp).seconds();
+    const double timestamp = rclcpp::Time(msg->header.stamp).seconds();
     const bool is_first_frame = (this->submap_pc_ == nullptr);
 
     double dt_from_ros2_msg = 0.0;
@@ -232,7 +235,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 if (this->params_.scan_downsampling_voxel_enable) {
                     this->voxel_filter_->downsampling(*this->scan_pc_, *this->preprocessed_pc_);
                 } else {
-                    *this->preprocessed_pc_ = *this->scan_pc_; // copy
+                    *this->preprocessed_pc_ = *this->scan_pc_;  // copy
                 }
             }
             if (is_first_frame) {
@@ -279,6 +282,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
             algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_, this->knn_result_).wait();
         }
+        this->last_keyframe_time_ = timestamp;
         return;
     }
 
@@ -305,6 +309,13 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     bool update_submap = false;
     time_utils::measure_execution(
         [&]() {
+            // Conditions for adding keyframes
+            //   inlier_ratio > keyframe_inlier_ratio_threshold
+            //   &&
+            //   ( distance > keyframe_distance_threshold ||
+            //     angle >= this->params_.keyframe_angle_threshold_degrees ||
+            //     delta_t >= this->params_.keyframe_time_threshold_seconds )
+
             const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->preprocessed_pc_->size();
             if (inlier_ratio <= this->params_.keyframe_inlier_ratio_threshold) {
                 return;
@@ -317,10 +328,15 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const auto distance = delta_pose.translation().norm();
             const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (180.0f / M_PIf);
 
+            // calculate delta time
+            const auto delta_time = this->last_keyframe_time_ > 0.0 ? timestamp - this->last_keyframe_time_ : std::numeric_limits<double>::lowest();
+
             // update submap
             if (distance >= this->params_.keyframe_distance_threshold ||
-                angle >= this->params_.keyframe_angle_threshold_degrees) {
+                angle >= this->params_.keyframe_angle_threshold_degrees ||
+                delta_time >= this->params_.keyframe_time_threshold_seconds) {
                 this->last_keyframe_pose_ = reg_result.T;
+                this->last_keyframe_time_ = timestamp;
 
                 const auto aligned = this->gicp_->get_aligned_point_cloud();
                 if (aligned == nullptr) {

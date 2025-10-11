@@ -27,6 +27,7 @@ lidar_odometry_node:
     keyframe/angle_threshold_degrees: 20.0
     keyframe/distance_threshold: 2.0
     keyframe/inlier_ratio_threshold: 0.7
+    keyframe/keyframe_time_threshold_seconds: 1.0
 
     gicp/min_num_points: 100
     gicp/max_iterations: 15

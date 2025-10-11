@@ -135,6 +135,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         this->declare_parameter<double>("scan/preprocess/box_filter/min", params.scan_preprocess_box_filter_min);
     params.scan_preprocess_box_filter_max =
         this->declare_parameter<double>("scan/preprocess/box_filter/max", params.scan_preprocess_box_filter_max);
+    params.scan_preprocess_random_sampling_enable = this->declare_parameter<bool>(
+        "scan/preprocess/random_sampling/enable", params.scan_preprocess_random_sampling_enable);
     params.scan_preprocess_random_sampling_num =
         this->declare_parameter<int>("scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
 
@@ -159,9 +161,6 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.gicp.max_iterations = this->declare_parameter<int>("gicp/max_iterations", 20);
     params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", 1e-4);
     params.gicp.max_correspondence_distance = this->declare_parameter<double>("gicp/max_correspondence_distance", 2.0);
-    params.gicp.adaptive_correspondence_distance =
-        this->declare_parameter<bool>("gicp/adaptive_correspondence_distance", true);
-    params.gicp.inlier_ratio = this->declare_parameter<double>("gicp/inlier_ratio", 0.7);
     params.gicp.crireria.translation = this->declare_parameter<double>("gicp/crireria/translation", 1e-3);
     params.gicp.crireria.rotation = this->declare_parameter<double>("gicp/crireria/rotation", 1e-3);
 
@@ -292,8 +291,10 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         [&]() {
             const Eigen::Isometry3f init_T = this->odom_;
 
-            this->preprocess_filter_->random_sampling(*this->preprocessed_pc_,
-                                                      this->params_.scan_preprocess_random_sampling_num);
+            if (this->params_.scan_preprocess_random_sampling_enable) {
+                this->preprocess_filter_->random_sampling(*this->preprocessed_pc_,
+                                                          this->params_.scan_preprocess_random_sampling_num);
+            }
 
             const auto result =
                 this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
@@ -329,7 +330,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (180.0f / M_PIf);
 
             // calculate delta time
-            const auto delta_time = this->last_keyframe_time_ > 0.0 ? timestamp - this->last_keyframe_time_ : std::numeric_limits<double>::lowest();
+            const auto delta_time = this->last_keyframe_time_ > 0.0 ? timestamp - this->last_keyframe_time_
+                                                                    : std::numeric_limits<double>::lowest();
 
             // update submap
             if (distance >= this->params_.keyframe_distance_threshold ||

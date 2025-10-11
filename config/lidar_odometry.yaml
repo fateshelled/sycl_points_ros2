@@ -12,6 +12,7 @@ lidar_odometry_node:
     scan/preprocess/box_filter/enable: true
     scan/preprocess/box_filter/max: 50.0
     scan/preprocess/box_filter/min: 2.0
+    scan/preprocess/random_sampling/enable: true
     scan/preprocess/random_sampling/num: 1000
     scan/downsampling/voxel/enable: false
     scan/downsampling/voxel/voxel_size: 0.5
@@ -33,8 +34,6 @@ lidar_odometry_node:
     gicp/max_iterations: 15
     gicp/lambda: 1e-4
     gicp/max_correspondence_distance: 2.0
-    gicp/adaptive_correspondence_distance: false
-    gicp/inlier_ratio: 0.7
     gicp/criteria/translation: 1e-3
     gicp/criteria/rotation: 1e-6
     gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE

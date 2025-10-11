@@ -38,6 +38,7 @@ public:
         bool scan_preprocess_box_filter_enable = true;
         float scan_preprocess_box_filter_min = 2.0f;
         float scan_preprocess_box_filter_max = 50.0f;
+        bool scan_preprocess_random_sampling_enable = true;
         int32_t scan_preprocess_random_sampling_num = 1000;
 
         float submap_downsampling_voxel_size = 1.0f;

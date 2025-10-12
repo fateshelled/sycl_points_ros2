@@ -5,6 +5,8 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
 from launch.actions import TimerAction
+from launch_ros.actions import ComposableNodeContainer
+from launch_ros.descriptions import ComposableNode
 import os
 import yaml
 
@@ -19,14 +21,29 @@ def declare_params_from_yaml(yaml_path: str, target_node="lidar_odometry_node"):
         if node_name == target_node:
             node_params: dict = all_params[node_name]["ros__parameters"]
             for name, value in node_params.items():
+                if isinstance(value, float):
+                    value_str = format(value, "f")
+                else:
+                    value_str = str(value)
                 launch_args.append(
-                    DeclareLaunchArgument(
-                        name, default_value=str(value), description=""
-                    )
+                    DeclareLaunchArgument(name, default_value=value_str, description="")
                 )
                 node_args[name] = LaunchConfiguration(name)
             break
     return launch_args, node_args
+
+
+def get_T_base_link_to_lidar(yaml_path: str, target_node="lidar_odometry_node"):
+    with open(yaml_path, "r") as f:
+        all_params = yaml.safe_load(f)
+
+    for node_name in all_params.keys():
+        if node_name == target_node:
+            node_params: dict = all_params[node_name]["ros__parameters"]
+            for name, value in node_params.items():
+                if name == "T_base_link_to_lidar":
+                    return value
+    return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
 
 def generate_launch_description():
@@ -35,6 +52,7 @@ def generate_launch_description():
     package_dir = get_package_share_directory(package_name)
     param_yaml = os.path.join(package_dir, "config", "lidar_odometry.yaml")
     launch_args, node_args = declare_params_from_yaml(param_yaml, node_name)
+    T_base_link_to_lidar = get_T_base_link_to_lidar(param_yaml, node_name)
     launch_args.extend(
         [
             DeclareLaunchArgument(
@@ -63,62 +81,10 @@ def generate_launch_description():
                 default_value="base_link",
                 description="base_link frame id",
             ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.x",
-                default_value="0.0",
-                description="static transform x from base_link to lidar_frame",
-            ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.y",
-                default_value="0.0",
-                description="static transform y from base_link to lidar_frame",
-            ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.z",
-                default_value="0.0",
-                description="static transform z from base_link to lidar_frame",
-            ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.qx",
-                default_value="0.0",
-                description="static transform qx from base_link to lidar_frame",
-            ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.qy",
-                default_value="0.0",
-                description="static transform qy from base_link to lidar_frame",
-            ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.qz",
-                default_value="0.0",
-                description="static transform qz from base_link to lidar_frame",
-            ),
-            DeclareLaunchArgument(
-                "base_link_to_lidar_frame.qw",
-                default_value="1.0",
-                description="static transform qw from base_link to lidar_frame",
-            ),
         ]
     )
 
     nodes = [
-        Node(
-            package=package_name,
-            executable=node_name,
-            name=node_name,
-            output="screen",
-            emulate_tty=True,
-            parameters=[
-                node_args,
-                {
-                    "odom_frame_id": LaunchConfiguration("odom_frame_id"),
-                    "base_link_id": LaunchConfiguration("base_link_id"),
-                },
-            ],
-            remappings=[
-                ("points", LaunchConfiguration("point_topic")),
-            ],
-        ),
         Node(
             package="rviz2",
             executable="rviz2",
@@ -131,15 +97,43 @@ def generate_launch_description():
                 Node(
                     package="tf2_ros",
                     executable="static_transform_publisher",
-                    arguments=["--x", LaunchConfiguration("base_link_to_lidar_frame.x")]
-                    + ["--y", LaunchConfiguration("base_link_to_lidar_frame.y")]
-                    + ["--z", LaunchConfiguration("base_link_to_lidar_frame.z")]
-                    + ["--qx", LaunchConfiguration("base_link_to_lidar_frame.qx")]
-                    + ["--qy", LaunchConfiguration("base_link_to_lidar_frame.qy")]
-                    + ["--qz", LaunchConfiguration("base_link_to_lidar_frame.qz")]
-                    + ["--qw", LaunchConfiguration("base_link_to_lidar_frame.qw")]
+                    arguments=["--x", str(T_base_link_to_lidar[0])]
+                    + ["--y", str(T_base_link_to_lidar[1])]
+                    + ["--z", str(T_base_link_to_lidar[2])]
+                    + ["--qx", str(T_base_link_to_lidar[3])]
+                    + ["--qy", str(T_base_link_to_lidar[4])]
+                    + ["--qz", str(T_base_link_to_lidar[5])]
+                    + ["--qw", str(T_base_link_to_lidar[6])]
                     + ["--frame-id", "base_link"]
                     + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
+                ),
+                ComposableNodeContainer(
+                    name="sycl_points_container",
+                    namespace="",
+                    package="rclcpp_components",
+                    executable="component_container",    # SingleThreadedExecutor
+                    # executable="component_container_mt",  # MultiThreadedExecutor
+                    output="screen",
+                    emulate_tty=True,
+                    composable_node_descriptions=[
+                        ComposableNode(
+                            package=package_name,
+                            plugin="sycl_points::ros2::LiDAROdometryNode",
+                            name=package_name,
+                            parameters=[
+                                node_args,
+                                {
+                                    "odom_frame_id": LaunchConfiguration(
+                                        "odom_frame_id"
+                                    ),
+                                    "base_link_id": LaunchConfiguration("base_link_id"),
+                                },
+                            ],
+                            remappings=[
+                                ("points", LaunchConfiguration("point_topic")),
+                            ],
+                        ),
+                    ],
                 ),
             ],
         ),

@@ -32,10 +32,10 @@ lidar_odometry_node:
 
     gicp/min_num_points: 100
     gicp/max_iterations: 15
-    gicp/lambda: 1e-4
+    gicp/lambda: 1.0e-4
     gicp/max_correspondence_distance: 2.0
-    gicp/criteria/translation: 1e-3
-    gicp/criteria/rotation: 1e-6
+    gicp/criteria/translation: 1.0e-3
+    gicp/criteria/rotation: 1.0e-6
     gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
     gicp/robust/scale: 10.0
     gicp/photometric/enable: false

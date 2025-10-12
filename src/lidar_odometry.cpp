@@ -12,62 +12,81 @@ namespace ros2 {
 /// @brief constructor
 /// @param options node option
 LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcpp::Node("lidar_odometry", options) {
+    // get parameters
     this->params_ = this->get_parameters();
 
     // SYCL queue
-    // const auto device_selector = sycl_utils::device_selector::default_selector_v;
-    // sycl::device dev(device_selector);
-    const auto dev =
-        sycl_utils::device_selector::select_device(this->params_.sycl_device_vendor, this->params_.sycl_device_type);
-    this->queue_ptr_ = std::make_shared<sycl_utils::DeviceQueue>(dev);
-    this->queue_ptr_->print_device_info();
+    {
+        // const auto device_selector = sycl_utils::device_selector::default_selector_v;
+        // sycl::device dev(device_selector);
+        const auto dev = sycl_utils::device_selector::select_device(this->params_.sycl_device_vendor,
+                                                                    this->params_.sycl_device_type);
+        this->queue_ptr_ = std::make_shared<sycl_utils::DeviceQueue>(dev);
+        this->queue_ptr_->print_device_info();
+    }
 
     // initialize buffer
-    this->msg_data_buffer_ = std::make_shared<shared_vector<uint8_t>>(*this->queue_ptr_->ptr);
+    {
+        this->msg_data_buffer_ = std::make_shared<shared_vector<uint8_t>>(*this->queue_ptr_->ptr);
+        this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+        this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+    }
 
     // set Initial pose
-    this->odom_ = this->params_.initial_pose;
-    this->last_keyframe_pose_ = this->params_.initial_pose;
-    this->last_keyframe_time_ = -1.0;
+    {
+        this->odom_ = this->params_.initial_pose;
+    }
 
-    this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
-    this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+    // initialize keyframe
+    {
+        this->last_keyframe_pose_ = this->params_.initial_pose;
+        this->last_keyframe_time_ = -1.0;
+    }
 
     // Point cloud processor
-    this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
-    if (this->params_.scan_downsampling_voxel_enable) {
-        this->voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
-            *this->queue_ptr_, this->params_.scan_downsampling_voxel_size);
+    {
+        this->preprocess_filter_ = std::make_shared<algorithms::filter::PreprocessFilter>(*this->queue_ptr_);
+        if (this->params_.scan_downsampling_voxel_enable) {
+            this->voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
+                *this->queue_ptr_, this->params_.scan_downsampling_voxel_size);
+        }
+        if (this->params_.scan_downsampling_polar_enable) {
+            const auto coord_system =
+                algorithms::coordinate_system_from_string(this->params_.scan_downsampling_polar_coord_system);
+            this->polar_filter_ = std::make_shared<algorithms::filter::PolarGrid>(
+                *this->queue_ptr_, this->params_.scan_downsampling_polar_distance_size,
+                this->params_.scan_downsampling_polar_elevation_size,
+                this->params_.scan_downsampling_polar_azimuth_size, coord_system);
+        }
+        this->submap_voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
+            *this->queue_ptr_, this->params_.submap_downsampling_voxel_size);
+        this->gicp_ =
+            std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->params_.gicp);
     }
-    if (this->params_.scan_downsampling_polar_enable) {
-        const auto coord_system =
-            algorithms::coordinate_system_from_string(this->params_.scan_downsampling_polar_coord_system);
-        this->polar_filter_ = std::make_shared<algorithms::filter::PolarGrid>(
-            *this->queue_ptr_, this->params_.scan_downsampling_polar_distance_size,
-            this->params_.scan_downsampling_polar_elevation_size, this->params_.scan_downsampling_polar_azimuth_size,
-            coord_system);
+
+    // Subscription
+    {
+        this->sub_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+            "points", rclcpp::QoS(10),
+            std::bind(&LiDAROdometryNode::point_cloud_callback, this, std::placeholders::_1));
     }
-    this->submap_voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
-        *this->queue_ptr_, this->params_.submap_downsampling_voxel_size);
-    this->gicp_ = std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->params_.gicp);
 
-    // pub/sub
-    this->sub_pc_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        "points", rclcpp::QoS(10), std::bind(&LiDAROdometryNode::point_cloud_callback, this, std::placeholders::_1));
+    // Publisher
+    {
+        this->pub_preprocessed_ =
+            this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::SensorDataQoS());
 
-    this->pub_preprocessed_ =
-        this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::SensorDataQoS());
+        auto submap_qos = rclcpp::QoS(1);
+        submap_qos.durability(rclcpp::DurabilityPolicy::TransientLocal);
+        this->pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/submap", submap_qos);
 
-    auto submap_qos = rclcpp::QoS(1);
-    submap_qos.durability(rclcpp::DurabilityPolicy::TransientLocal);
-    this->pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/submap", submap_qos);
+        this->pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/odom", rclcpp::QoS(10));
+        this->pub_pose_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("sycl_lo/pose", rclcpp::QoS(10));
+        this->pub_keyframe_pose_ =
+            this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/keyframe/pose", rclcpp::QoS(10));
 
-    this->pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/odom", rclcpp::QoS(10));
-    this->pub_pose_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("sycl_lo/pose", rclcpp::QoS(10));
-    this->pub_keyframe_pose_ =
-        this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/keyframe/pose", rclcpp::QoS(10));
-
-    this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+        this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+    }
 
     RCLCPP_INFO(this->get_logger(), "Subscribe PointCloud: %s", this->sub_pc_->get_topic_name());
     RCLCPP_INFO(this->get_logger(), "Publish Preprocessed PointCloud: %s", this->pub_preprocessed_->get_topic_name());
@@ -156,25 +175,32 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     params.keyframe_time_threshold_seconds =
         this->declare_parameter<double>("keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
 
-    params.gicp_min_num_points = this->declare_parameter<int>("gicp/min_num_points", 100);
+    params.gicp_min_num_points = this->declare_parameter<int>("gicp/min_num_points", params.gicp_min_num_points);
 
-    params.gicp.max_iterations = this->declare_parameter<int>("gicp/max_iterations", 20);
-    params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", 1e-4);
-    params.gicp.max_correspondence_distance = this->declare_parameter<double>("gicp/max_correspondence_distance", 2.0);
-    params.gicp.crireria.translation = this->declare_parameter<double>("gicp/crireria/translation", 1e-3);
-    params.gicp.crireria.rotation = this->declare_parameter<double>("gicp/crireria/rotation", 1e-3);
+    params.gicp.max_iterations = this->declare_parameter<int>("gicp/max_iterations", params.gicp.max_iterations);
+    params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", params.gicp.lambda);
+    params.gicp.max_correspondence_distance =
+        this->declare_parameter<double>("gicp/max_correspondence_distance", params.gicp.max_correspondence_distance);
+    params.gicp.crireria.translation =
+        this->declare_parameter<double>("gicp/criteria/translation", params.gicp.crireria.translation);
+    params.gicp.crireria.rotation =
+        this->declare_parameter<double>("gicp/criteria/rotation", params.gicp.crireria.rotation);
 
     const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust/type", "NONE");
     params.gicp.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
-    params.gicp.robust.scale = this->declare_parameter<double>("gicp/robust/scale", 1.0);
-    params.gicp.photometric.enable = this->declare_parameter<bool>("gicp/photometric/enable", false);
-    params.gicp.photometric.photometric_weight = this->declare_parameter<double>("gicp/photometric/weight", 0.0f);
+    params.gicp.robust.scale = this->declare_parameter<double>("gicp/robust/scale", params.gicp.robust.scale);
+    params.gicp.photometric.enable =
+        this->declare_parameter<bool>("gicp/photometric/enable", params.gicp.photometric.enable);
+    params.gicp.photometric.photometric_weight =
+        this->declare_parameter<double>("gicp/photometric/weight", params.gicp.photometric.photometric_weight);
 
-    params.gicp.lm.enable = this->declare_parameter<bool>("gicp/lm/enable", false);
-    params.gicp.lm.max_inner_iterations = this->declare_parameter<int>("gicp/lm/max_inner_iterations", 10);
-    params.gicp.lm.lambda_factor = this->declare_parameter<double>("gicp/lm/lambda_factor", 10.0);
+    params.gicp.lm.enable = this->declare_parameter<bool>("gicp/lm/enable", params.gicp.lm.enable);
+    params.gicp.lm.max_inner_iterations =
+        this->declare_parameter<int>("gicp/lm/max_inner_iterations", params.gicp.lm.max_inner_iterations);
+    params.gicp.lm.lambda_factor =
+        this->declare_parameter<double>("gicp/lm/lambda_factor", params.gicp.lm.lambda_factor);
 
-    params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", true);
+    params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", params.gicp.verbose);
 
     params.odom_frame_id = this->declare_parameter<std::string>("odom_frame_id", "odom");
     params.base_link_id = this->declare_parameter<std::string>("base_link_id", "base_link");
@@ -187,6 +213,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         params.T_base_link_to_lidar.translation() << T[0], T[1], T[2];
         const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
         params.T_base_link_to_lidar.matrix().block<3, 3>(0, 0) = quat.matrix();
+
+        params.T_lidar_to_base_link = params.T_base_link_to_lidar.inverse();
     }
 
     {
@@ -238,8 +266,12 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 }
             }
             if (is_first_frame) {
+                sycl_points::algorithms::transform::transform(
+                    *this->preprocessed_pc_,
+                    (this->params_.initial_pose * this->params_.T_lidar_to_base_link).matrix());
+            } else {
                 sycl_points::algorithms::transform::transform(*this->preprocessed_pc_,
-                                                              this->params_.initial_pose.matrix());
+                                                              this->params_.T_lidar_to_base_link.matrix());
             }
         },
         dt_preprocessing);

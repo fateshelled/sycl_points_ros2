@@ -56,7 +56,9 @@ public:
         std::string base_link_id = "base_link";
 
         Eigen::Isometry3f T_base_link_to_lidar = Eigen::Isometry3f::Identity();
-        Eigen::Isometry3f initial_pose = Eigen::Isometry3f::Identity();
+        Eigen::Isometry3f T_lidar_to_base_link = Eigen::Isometry3f::Identity();
+
+        Eigen::Isometry3f initial_pose = Eigen::Isometry3f::Identity(); // map to base_link
     };
 
 private:

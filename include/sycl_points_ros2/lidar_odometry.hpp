@@ -103,7 +103,7 @@ private:
 
     Parameters get_parameters();
     void point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
-    void publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom);
+    void publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom, const algorithms::registration::RegistrationResult& reg_result);
     void publish_keyframe_pose(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom);
 };
 }  // namespace ros2

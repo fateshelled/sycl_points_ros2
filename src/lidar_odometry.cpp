@@ -432,7 +432,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_publish = 0.0;
     time_utils::measure_execution(
         [&]() {
-            this->publish_odom(msg->header, this->odom_);
+            this->publish_odom(msg->header, this->odom_, reg_result);
             if (preprocessed_msg != nullptr && this->pub_preprocessed_->get_subscription_count() > 0) {
                 this->pub_preprocessed_->publish(*preprocessed_msg);
             }
@@ -478,7 +478,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     RCLCPP_INFO(this->get_logger(), "");
 }
 
-void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom) {
+void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom, const algorithms::registration::RegistrationResult& reg_result) {
     geometry_msgs::msg::TransformStamped tf;
     tf.header.stamp = header.stamp;
     tf.header.frame_id = this->params_.odom_frame_id;
@@ -511,6 +511,20 @@ void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const 
     odom_msg.child_frame_id = tf.child_frame_id;
     odom_msg.pose.pose.position = pose.pose.position;
     odom_msg.pose.pose.orientation = pose.pose.orientation;
+    // convert Hessian to Covariance
+    {
+        // rotation first
+        const Eigen::Matrix<float, 6, 6> cov_gicp = reg_result.H.inverse();
+
+        // ROS covariance is translation first
+        Eigen::Matrix<float, 6, 6> cov_odom;
+        cov_odom.block<3, 3>(0, 0) = cov_gicp.block<3, 3>(3, 3);
+        cov_odom.block<3, 3>(3, 3) = cov_gicp.block<3, 3>(0, 0);
+        cov_odom.block<3, 3>(0, 3) = cov_gicp.block<3, 3>(3, 0);
+        cov_odom.block<3, 3>(3, 0) = cov_gicp.block<3, 3>(0, 3);
+
+        Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>(odom_msg.pose.covariance.data()) = cov_odom.cast<double>();
+    }
     this->pub_odom_->publish(odom_msg);
 }
 

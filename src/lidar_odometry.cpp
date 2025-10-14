@@ -30,6 +30,7 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
         this->msg_data_buffer_ = std::make_shared<shared_vector<uint8_t>>(*this->queue_ptr_->ptr);
         this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
         this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+        this->gicp_input_pc_.reset(new PointCloudShared(*this->queue_ptr_));
     }
 
     // set Initial pose
@@ -324,12 +325,13 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const Eigen::Isometry3f init_T = this->odom_;
 
             if (this->params_.scan_preprocess_random_sampling_enable) {
-                this->preprocess_filter_->random_sampling(*this->preprocessed_pc_,
+                this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, *this->gicp_input_pc_,
                                                           this->params_.scan_preprocess_random_sampling_num);
+            } else {
+                *this->gicp_input_pc_ = *this->preprocessed_pc_;
             }
-
             const auto result =
-                this->gicp_->align(*this->preprocessed_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
+                this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
 
             // update odometry
             this->odom_ = result.T;
@@ -339,8 +341,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
     // Build submap
     double dt_build_submap = 0.0;
-    bool update_submap = false;
-    time_utils::measure_execution(
+    const bool update_submap = time_utils::measure_execution(
         [&]() {
             // Conditions for adding keyframes
             //   inlier_ratio > keyframe_inlier_ratio_threshold
@@ -349,9 +350,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             //     angle >= this->params_.keyframe_angle_threshold_degrees ||
             //     delta_t >= this->params_.keyframe_time_threshold_seconds )
 
-            const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->preprocessed_pc_->size();
+            const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->gicp_input_pc_->size();
             if (inlier_ratio <= this->params_.keyframe_inlier_ratio_threshold) {
-                return;
+                return false;
             }
 
             // calculate delta pose
@@ -363,7 +364,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
             // calculate delta time
             const auto delta_time = this->last_keyframe_time_ > 0.0 ? timestamp - this->last_keyframe_time_
-                                                                    : std::numeric_limits<double>::lowest();
+                                                                    : std::numeric_limits<double>::max();
 
             // update submap
             if (distance >= this->params_.keyframe_distance_threshold ||
@@ -375,7 +376,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 const auto aligned = this->gicp_->get_aligned_point_cloud();
                 if (aligned == nullptr) {
                     RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
-                    return;
+                    return false;
                 }
                 // add new points
                 this->submap_pc_->extend(*aligned);
@@ -406,8 +407,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                     algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_, this->knn_result_)
                         .wait();
                 }
-                update_submap = true;
+                return true;
             }
+            return false;
         },
         dt_build_submap);
 
@@ -436,6 +438,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             }
             if (update_submap) {
                 this->publish_keyframe_pose(msg->header, this->last_keyframe_pose_);
+                RCLCPP_WARN(this->get_logger(), "ADD Keyframe");
             }
             if (submap_msg != nullptr && this->pub_submap_->get_subscription_count() > 0) {
                 this->pub_submap_->publish(*submap_msg);

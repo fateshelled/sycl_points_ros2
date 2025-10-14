@@ -75,6 +75,7 @@ private:
     sycl_points::shared_vector_ptr<uint8_t> msg_data_buffer_ = nullptr;
     PointCloudShared::Ptr scan_pc_ = nullptr;
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
+    PointCloudShared::Ptr gicp_input_pc_ = nullptr;
     PointCloudShared::Ptr submap_pc_ = nullptr;
     algorithms::knn_search::KDTree::Ptr submap_tree_ = nullptr;
     algorithms::knn_search::KNNResult knn_result_;

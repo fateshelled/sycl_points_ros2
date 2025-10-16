@@ -237,20 +237,20 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             params.gicp.lm.min_lambda =
                 this->declare_parameter<double>("gicp/lm/min_lambda", params.gicp.lm.min_lambda);
 
-            // params.gicp.dogleg.max_inner_iterations = this->declare_parameter<int>(
-            //     "gicp/dogleg/max_inner_iterations", params.gicp.dogleg.max_inner_iterations);
-            // params.gicp.dogleg.initial_trust_region_radius = this->declare_parameter<double>(
-            //     "gicp/dogleg/initial_trust_region_radius", params.gicp.dogleg.initial_trust_region_radius);
-            // params.gicp.dogleg.max_trust_region_radius = this->declare_parameter<double>(
-            //     "gicp/dogleg/max_trust_region_radius", params.gicp.dogleg.max_trust_region_radius);
-            // params.gicp.dogleg.min_trust_region_radius = this->declare_parameter<double>(
-            //     "gicp/dogleg/min_trust_region_radius", params.gicp.dogleg.min_trust_region_radius);
-            // params.gicp.dogleg.eta1 = this->declare_parameter<double>("gicp/dogleg/eta1", params.gicp.dogleg.eta1);
-            // params.gicp.dogleg.eta2 = this->declare_parameter<double>("gicp/dogleg/eta2", params.gicp.dogleg.eta2);
-            // params.gicp.dogleg.gamma_decrease =
-            //     this->declare_parameter<double>("gicp/dogleg/gamma_decrease", params.gicp.dogleg.gamma_decrease);
-            // params.gicp.dogleg.gamma_increase =
-            //     this->declare_parameter<double>("gicp/dogleg/gamma_increase", params.gicp.dogleg.gamma_increase);
+            params.gicp.dogleg.max_inner_iterations = this->declare_parameter<int>(
+                "gicp/dogleg/max_inner_iterations", params.gicp.dogleg.max_inner_iterations);
+            params.gicp.dogleg.initial_trust_region_radius = this->declare_parameter<double>(
+                "gicp/dogleg/initial_trust_region_radius", params.gicp.dogleg.initial_trust_region_radius);
+            params.gicp.dogleg.max_trust_region_radius = this->declare_parameter<double>(
+                "gicp/dogleg/max_trust_region_radius", params.gicp.dogleg.max_trust_region_radius);
+            params.gicp.dogleg.min_trust_region_radius = this->declare_parameter<double>(
+                "gicp/dogleg/min_trust_region_radius", params.gicp.dogleg.min_trust_region_radius);
+            params.gicp.dogleg.eta1 = this->declare_parameter<double>("gicp/dogleg/eta1", params.gicp.dogleg.eta1);
+            params.gicp.dogleg.eta2 = this->declare_parameter<double>("gicp/dogleg/eta2", params.gicp.dogleg.eta2);
+            params.gicp.dogleg.gamma_decrease =
+                this->declare_parameter<double>("gicp/dogleg/gamma_decrease", params.gicp.dogleg.gamma_decrease);
+            params.gicp.dogleg.gamma_increase =
+                this->declare_parameter<double>("gicp/dogleg/gamma_increase", params.gicp.dogleg.gamma_increase);
         }
     }
 

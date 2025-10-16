@@ -42,15 +42,15 @@ lidar_odometry_node:
     gicp/photometric/photometric_weight: 0.2
     gicp/optimization_method: LM  # GN, LM, DOGLEG
     gicp/lm/max_inner_iterations: 10
-    gicp/lm/lambda_factor: 2.0
-    gicp/lm/max_lambda: 1.0e+3
+    gicp/lm/lambda_factor: 10.0
+    gicp/lm/max_lambda: 1.0e+6
     gicp/lm/min_lambda: 1.0e-6
-    # gicp/dogleg/max_inner_iterations: 10
-    # gicp/dogleg/initial_trust_region_radius: 3.0
-    # gicp/dogleg/max_trust_region_radius: 10.0
-    # gicp/dogleg/min_trust_region_radius: 1.0e-3
-    # gicp/dogleg/eta1: 0.25
-    # gicp/dogleg/eta2: 0.75
-    # gicp/dogleg/gamma_decrease: 0.25
-    # gicp/dogleg/gamma_increase: 2.0
+    gicp/dogleg/max_inner_iterations: 10
+    gicp/dogleg/initial_trust_region_radius: 1.0
+    gicp/dogleg/max_trust_region_radius: 10.0
+    gicp/dogleg/min_trust_region_radius: 1.0e-3
+    gicp/dogleg/eta1: 0.25
+    gicp/dogleg/eta2: 0.75
+    gicp/dogleg/gamma_decrease: 0.25
+    gicp/dogleg/gamma_increase: 2.0
     gicp/verbose: true

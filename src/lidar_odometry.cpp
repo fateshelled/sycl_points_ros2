@@ -128,105 +128,159 @@ LiDAROdometryNode::~LiDAROdometryNode() {
 LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     LiDAROdometryNode::Parameters params;
 
-    params.sycl_device_vendor = this->declare_parameter<std::string>("sycl/device_vendor", params.sycl_device_vendor);
-    params.sycl_device_type = this->declare_parameter<std::string>("sycl/device_type", params.sycl_device_type);
-
-    params.scan_downsampling_voxel_enable =
-        this->declare_parameter<bool>("scan/downsampling/voxel/enable", params.scan_downsampling_voxel_enable);
-    params.scan_downsampling_voxel_size =
-        this->declare_parameter<double>("scan/downsampling/voxel/voxel_size", params.scan_downsampling_voxel_size);
-
-    params.scan_downsampling_polar_enable =
-        this->declare_parameter<bool>("scan/downsampling/polar/enable", params.scan_downsampling_polar_enable);
-    params.scan_downsampling_polar_distance_size = this->declare_parameter<double>(
-        "scan/downsampling/polar/distance_size", params.scan_downsampling_polar_distance_size);
-    params.scan_downsampling_polar_elevation_size = this->declare_parameter<double>(
-        "scan/downsampling/polar/elevation_size", params.scan_downsampling_polar_elevation_size);
-    params.scan_downsampling_polar_azimuth_size = this->declare_parameter<double>(
-        "scan/downsampling/polar/azimuth_size", params.scan_downsampling_polar_azimuth_size);
-    params.scan_downsampling_polar_coord_system = this->declare_parameter<std::string>(
-        "scan/downsampling/polar/coord_system", params.scan_downsampling_polar_coord_system);
-
-    params.scan_covariance_neighbor_num =
-        this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
-    params.scan_preprocess_box_filter_enable =
-        this->declare_parameter<bool>("scan/preprocess/box_filter/enable", params.scan_preprocess_box_filter_enable);
-    params.scan_preprocess_box_filter_min =
-        this->declare_parameter<double>("scan/preprocess/box_filter/min", params.scan_preprocess_box_filter_min);
-    params.scan_preprocess_box_filter_max =
-        this->declare_parameter<double>("scan/preprocess/box_filter/max", params.scan_preprocess_box_filter_max);
-    params.scan_preprocess_random_sampling_enable = this->declare_parameter<bool>(
-        "scan/preprocess/random_sampling/enable", params.scan_preprocess_random_sampling_enable);
-    params.scan_preprocess_random_sampling_num =
-        this->declare_parameter<int>("scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
-
-    params.submap_downsampling_voxel_size =
-        this->declare_parameter<double>("submap/downsampling/voxel/voxel_size", params.submap_downsampling_voxel_size);
-    params.submap_covariance_neighbor_num =
-        this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
-    params.submap_color_gradient_neighbor_num =
-        this->declare_parameter<int>("submap/color_gradient/neighbor_num", params.submap_color_gradient_neighbor_num);
-
-    params.keyframe_inlier_ratio_threshold =
-        this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
-    params.keyframe_distance_threshold =
-        this->declare_parameter<double>("keyframe/distance_threshold", params.keyframe_distance_threshold);
-    params.keyframe_angle_threshold_degrees =
-        this->declare_parameter<double>("keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
-    params.keyframe_time_threshold_seconds =
-        this->declare_parameter<double>("keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
-
-    params.gicp_min_num_points = this->declare_parameter<int>("gicp/min_num_points", params.gicp_min_num_points);
-
-    params.gicp.max_iterations = this->declare_parameter<int>("gicp/max_iterations", params.gicp.max_iterations);
-    params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", params.gicp.lambda);
-    params.gicp.max_correspondence_distance =
-        this->declare_parameter<double>("gicp/max_correspondence_distance", params.gicp.max_correspondence_distance);
-    params.gicp.crireria.translation =
-        this->declare_parameter<double>("gicp/criteria/translation", params.gicp.crireria.translation);
-    params.gicp.crireria.rotation =
-        this->declare_parameter<double>("gicp/criteria/rotation", params.gicp.crireria.rotation);
-
-    const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust/type", "NONE");
-    params.gicp.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
-    params.gicp.robust.scale = this->declare_parameter<double>("gicp/robust/scale", params.gicp.robust.scale);
-    params.gicp.photometric.enable =
-        this->declare_parameter<bool>("gicp/photometric/enable", params.gicp.photometric.enable);
-    params.gicp.photometric.photometric_weight =
-        this->declare_parameter<double>("gicp/photometric/weight", params.gicp.photometric.photometric_weight);
-
-    params.gicp.lm.enable = this->declare_parameter<bool>("gicp/lm/enable", params.gicp.lm.enable);
-    params.gicp.lm.max_inner_iterations =
-        this->declare_parameter<int>("gicp/lm/max_inner_iterations", params.gicp.lm.max_inner_iterations);
-    params.gicp.lm.lambda_factor =
-        this->declare_parameter<double>("gicp/lm/lambda_factor", params.gicp.lm.lambda_factor);
-
-    params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", params.gicp.verbose);
-
-    params.odom_frame_id = this->declare_parameter<std::string>("odom_frame_id", "odom");
-    params.base_link_id = this->declare_parameter<std::string>("base_link_id", "base_link");
+    // SYCL
     {
-        // x, y, z, qx, qy, qz, qw
-        const auto T =
-            this->declare_parameter<std::vector<double>>("T_base_link_to_lidar", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
-        if (T.size() != 7) throw std::runtime_error("invalid T_base_link_to_lidar");
-        params.T_base_link_to_lidar.setIdentity();
-        params.T_base_link_to_lidar.translation() << T[0], T[1], T[2];
-        const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
-        params.T_base_link_to_lidar.matrix().block<3, 3>(0, 0) = quat.matrix();
-
-        params.T_lidar_to_base_link = params.T_base_link_to_lidar.inverse();
+        params.sycl_device_vendor =
+            this->declare_parameter<std::string>("sycl/device_vendor", params.sycl_device_vendor);
+        params.sycl_device_type = this->declare_parameter<std::string>("sycl/device_type", params.sycl_device_type);
     }
 
+    // scan
     {
-        // x, y, z, qx, qy, qz, qw
-        const auto T =
-            this->declare_parameter<std::vector<double>>("initial_pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
-        if (T.size() != 7) throw std::runtime_error("invalid initial_pose");
-        params.initial_pose.setIdentity();
-        params.initial_pose.translation() << T[0], T[1], T[2];
-        const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
-        params.initial_pose.matrix().block<3, 3>(0, 0) = quat.matrix();
+        params.scan_downsampling_voxel_enable =
+            this->declare_parameter<bool>("scan/downsampling/voxel/enable", params.scan_downsampling_voxel_enable);
+        params.scan_downsampling_voxel_size =
+            this->declare_parameter<double>("scan/downsampling/voxel/voxel_size", params.scan_downsampling_voxel_size);
+
+        params.scan_downsampling_polar_enable =
+            this->declare_parameter<bool>("scan/downsampling/polar/enable", params.scan_downsampling_polar_enable);
+        params.scan_downsampling_polar_distance_size = this->declare_parameter<double>(
+            "scan/downsampling/polar/distance_size", params.scan_downsampling_polar_distance_size);
+        params.scan_downsampling_polar_elevation_size = this->declare_parameter<double>(
+            "scan/downsampling/polar/elevation_size", params.scan_downsampling_polar_elevation_size);
+        params.scan_downsampling_polar_azimuth_size = this->declare_parameter<double>(
+            "scan/downsampling/polar/azimuth_size", params.scan_downsampling_polar_azimuth_size);
+        params.scan_downsampling_polar_coord_system = this->declare_parameter<std::string>(
+            "scan/downsampling/polar/coord_system", params.scan_downsampling_polar_coord_system);
+
+        params.scan_covariance_neighbor_num =
+            this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
+        params.scan_preprocess_box_filter_enable = this->declare_parameter<bool>(
+            "scan/preprocess/box_filter/enable", params.scan_preprocess_box_filter_enable);
+        params.scan_preprocess_box_filter_min =
+            this->declare_parameter<double>("scan/preprocess/box_filter/min", params.scan_preprocess_box_filter_min);
+        params.scan_preprocess_box_filter_max =
+            this->declare_parameter<double>("scan/preprocess/box_filter/max", params.scan_preprocess_box_filter_max);
+        params.scan_preprocess_random_sampling_enable = this->declare_parameter<bool>(
+            "scan/preprocess/random_sampling/enable", params.scan_preprocess_random_sampling_enable);
+        params.scan_preprocess_random_sampling_num = this->declare_parameter<int>(
+            "scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
+    }
+
+    // submap and keyframe
+    {
+        params.submap_downsampling_voxel_size = this->declare_parameter<double>("submap/downsampling/voxel/voxel_size",
+                                                                                params.submap_downsampling_voxel_size);
+        params.submap_covariance_neighbor_num =
+            this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
+        params.submap_color_gradient_neighbor_num = this->declare_parameter<int>(
+            "submap/color_gradient/neighbor_num", params.submap_color_gradient_neighbor_num);
+
+        params.keyframe_inlier_ratio_threshold =
+            this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
+        params.keyframe_distance_threshold =
+            this->declare_parameter<double>("keyframe/distance_threshold", params.keyframe_distance_threshold);
+        params.keyframe_angle_threshold_degrees = this->declare_parameter<double>(
+            "keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
+        params.keyframe_time_threshold_seconds =
+            this->declare_parameter<double>("keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
+    }
+
+    // Registration
+    {
+        // common
+        {
+            params.gicp_min_num_points =
+                this->declare_parameter<int>("gicp/min_num_points", params.gicp_min_num_points);
+
+            params.gicp.max_iterations =
+                this->declare_parameter<int>("gicp/max_iterations", params.gicp.max_iterations);
+            params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", params.gicp.lambda);
+            params.gicp.max_correspondence_distance = this->declare_parameter<double>(
+                "gicp/max_correspondence_distance", params.gicp.max_correspondence_distance);
+            params.gicp.crireria.translation =
+                this->declare_parameter<double>("gicp/criteria/translation", params.gicp.crireria.translation);
+            params.gicp.crireria.rotation =
+                this->declare_parameter<double>("gicp/criteria/rotation", params.gicp.crireria.rotation);
+
+            params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", params.gicp.verbose);
+        }
+
+        // robust
+        {
+            const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust/type", "NONE");
+            params.gicp.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
+            params.gicp.robust.scale = this->declare_parameter<double>("gicp/robust/scale", params.gicp.robust.scale);
+        }
+
+        // photometric
+        {
+            params.gicp.photometric.enable =
+                this->declare_parameter<bool>("gicp/photometric/enable", params.gicp.photometric.enable);
+            params.gicp.photometric.photometric_weight =
+                this->declare_parameter<double>("gicp/photometric/weight", params.gicp.photometric.photometric_weight);
+        }
+
+        // optimization
+        {
+            const std::string optimization_method =
+                this->declare_parameter<std::string>("gicp/optimization_method", "GN");
+            params.gicp.optimization_method =
+                algorithms::registration::OptimizationMethod_from_string(optimization_method);
+
+            params.gicp.lm.max_inner_iterations =
+                this->declare_parameter<int>("gicp/lm/max_inner_iterations", params.gicp.lm.max_inner_iterations);
+            params.gicp.lm.lambda_factor =
+                this->declare_parameter<double>("gicp/lm/lambda_factor", params.gicp.lm.lambda_factor);
+            params.gicp.lm.max_lambda =
+                this->declare_parameter<double>("gicp/lm/max_lambda", params.gicp.lm.max_lambda);
+            params.gicp.lm.min_lambda =
+                this->declare_parameter<double>("gicp/lm/min_lambda", params.gicp.lm.min_lambda);
+
+            // params.gicp.dogleg.max_inner_iterations = this->declare_parameter<int>(
+            //     "gicp/dogleg/max_inner_iterations", params.gicp.dogleg.max_inner_iterations);
+            // params.gicp.dogleg.initial_trust_region_radius = this->declare_parameter<double>(
+            //     "gicp/dogleg/initial_trust_region_radius", params.gicp.dogleg.initial_trust_region_radius);
+            // params.gicp.dogleg.max_trust_region_radius = this->declare_parameter<double>(
+            //     "gicp/dogleg/max_trust_region_radius", params.gicp.dogleg.max_trust_region_radius);
+            // params.gicp.dogleg.min_trust_region_radius = this->declare_parameter<double>(
+            //     "gicp/dogleg/min_trust_region_radius", params.gicp.dogleg.min_trust_region_radius);
+            // params.gicp.dogleg.eta1 = this->declare_parameter<double>("gicp/dogleg/eta1", params.gicp.dogleg.eta1);
+            // params.gicp.dogleg.eta2 = this->declare_parameter<double>("gicp/dogleg/eta2", params.gicp.dogleg.eta2);
+            // params.gicp.dogleg.gamma_decrease =
+            //     this->declare_parameter<double>("gicp/dogleg/gamma_decrease", params.gicp.dogleg.gamma_decrease);
+            // params.gicp.dogleg.gamma_increase =
+            //     this->declare_parameter<double>("gicp/dogleg/gamma_increase", params.gicp.dogleg.gamma_increase);
+        }
+    }
+
+    // tf and pose
+    {
+        params.odom_frame_id = this->declare_parameter<std::string>("odom_frame_id", "odom");
+        params.base_link_id = this->declare_parameter<std::string>("base_link_id", "base_link");
+        {
+            // x, y, z, qx, qy, qz, qw
+            const auto T = this->declare_parameter<std::vector<double>>("T_base_link_to_lidar",
+                                                                        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+            if (T.size() != 7) throw std::runtime_error("invalid T_base_link_to_lidar");
+            params.T_base_link_to_lidar.setIdentity();
+            params.T_base_link_to_lidar.translation() << T[0], T[1], T[2];
+            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+            params.T_base_link_to_lidar.matrix().block<3, 3>(0, 0) = quat.matrix();
+
+            params.T_lidar_to_base_link = params.T_base_link_to_lidar.inverse();
+        }
+
+        {
+            // x, y, z, qx, qy, qz, qw
+            const auto T =
+                this->declare_parameter<std::vector<double>>("initial_pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+            if (T.size() != 7) throw std::runtime_error("invalid initial_pose");
+            params.initial_pose.setIdentity();
+            params.initial_pose.translation() << T[0], T[1], T[2];
+            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+            params.initial_pose.matrix().block<3, 3>(0, 0) = quat.matrix();
+        }
     }
     return params;
 }
@@ -438,7 +492,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             }
             if (update_submap) {
                 this->publish_keyframe_pose(msg->header, this->last_keyframe_pose_);
-                RCLCPP_WARN(this->get_logger(), "ADD Keyframe");
+                RCLCPP_INFO(this->get_logger(), "ADD Keyframe");
             }
             if (submap_msg != nullptr && this->pub_submap_->get_subscription_count() > 0) {
                 this->pub_submap_->publish(*submap_msg);
@@ -478,7 +532,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     RCLCPP_INFO(this->get_logger(), "");
 }
 
-void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom, const algorithms::registration::RegistrationResult& reg_result) {
+void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom,
+                                     const algorithms::registration::RegistrationResult& reg_result) {
     geometry_msgs::msg::TransformStamped tf;
     tf.header.stamp = header.stamp;
     tf.header.frame_id = this->params_.odom_frame_id;
@@ -523,7 +578,8 @@ void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const 
         cov_odom.block<3, 3>(0, 3) = cov_gicp.block<3, 3>(3, 0);
         cov_odom.block<3, 3>(3, 0) = cov_gicp.block<3, 3>(0, 3);
 
-        Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>(odom_msg.pose.covariance.data()) = cov_odom.cast<double>();
+        Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>(odom_msg.pose.covariance.data()) =
+            cov_odom.cast<double>();
     }
     this->pub_odom_->publish(odom_msg);
 }

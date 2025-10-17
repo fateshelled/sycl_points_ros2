@@ -237,8 +237,6 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             params.gicp.lm.min_lambda =
                 this->declare_parameter<double>("gicp/lm/min_lambda", params.gicp.lm.min_lambda);
 
-            params.gicp.dogleg.max_inner_iterations = this->declare_parameter<int>(
-                "gicp/dogleg/max_inner_iterations", params.gicp.dogleg.max_inner_iterations);
             params.gicp.dogleg.initial_trust_region_radius = this->declare_parameter<double>(
                 "gicp/dogleg/initial_trust_region_radius", params.gicp.dogleg.initial_trust_region_radius);
             params.gicp.dogleg.max_trust_region_radius = this->declare_parameter<double>(

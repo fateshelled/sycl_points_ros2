@@ -319,12 +319,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 }
             }
             if (is_first_frame) {
-                sycl_points::algorithms::transform::transform(
-                    *this->preprocessed_pc_,
-                    (this->params_.initial_pose * this->params_.T_lidar_to_base_link).matrix());
-            } else {
                 sycl_points::algorithms::transform::transform(*this->preprocessed_pc_,
-                                                              this->params_.T_lidar_to_base_link.matrix());
+                                                              this->params_.initial_pose.matrix());
             }
         },
         dt_preprocessing);

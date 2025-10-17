@@ -7,6 +7,7 @@ lidar_odometry_node:
 
     # x, y, z, qx, qy, qz, qw
     initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    T_base_link_to_lidar: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
 
     scan/covariance/neighbor_num: 20
     scan/preprocess/box_filter/enable: true
@@ -17,7 +18,7 @@ lidar_odometry_node:
     scan/downsampling/voxel/enable: false
     scan/downsampling/voxel/voxel_size: 0.5
     scan/downsampling/polar/enable: true
-    scan/downsampling/polar/distance_size: 5.0  # meters
+    scan/downsampling/polar/distance_size: 0.5  # meters
     scan/downsampling/polar/elevation_size: 0.05235987755982989 # 3 degrees
     scan/downsampling/polar/azimuth_size: 0.05235987755982989   # 3 degrees
     scan/downsampling/polar/coord_system: CAMERA # CAMERA or LIDAR

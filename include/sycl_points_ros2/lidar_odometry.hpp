@@ -6,7 +6,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <sycl_points/algorithms/knn_search.hpp>
+#include <sycl_points/algorithms/knn/kdtree.hpp>
 #include <sycl_points/algorithms/polar_downsampling.hpp>
 #include <sycl_points/algorithms/preprocess_filter.hpp>
 #include <sycl_points/algorithms/registration.hpp>
@@ -58,7 +58,7 @@ public:
         Eigen::Isometry3f T_base_link_to_lidar = Eigen::Isometry3f::Identity();
         Eigen::Isometry3f T_lidar_to_base_link = Eigen::Isometry3f::Identity();
 
-        Eigen::Isometry3f initial_pose = Eigen::Isometry3f::Identity(); // map to base_link
+        Eigen::Isometry3f initial_pose = Eigen::Isometry3f::Identity();  // map to base_link
     };
 
 private:
@@ -77,8 +77,8 @@ private:
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
     PointCloudShared::Ptr gicp_input_pc_ = nullptr;
     PointCloudShared::Ptr submap_pc_ = nullptr;
-    algorithms::knn_search::KDTree::Ptr submap_tree_ = nullptr;
-    algorithms::knn_search::KNNResult knn_result_;
+    algorithms::knn::KDTree::Ptr submap_tree_ = nullptr;
+    algorithms::knn::KNNResult knn_result_;
 
     algorithms::filter::PreprocessFilter::Ptr preprocess_filter_ = nullptr;
     algorithms::filter::VoxelGrid::Ptr voxel_filter_ = nullptr;
@@ -103,7 +103,8 @@ private:
 
     Parameters get_parameters();
     void point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
-    void publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom, const algorithms::registration::RegistrationResult& reg_result);
+    void publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom,
+                      const algorithms::registration::RegistrationResult& reg_result);
     void publish_keyframe_pose(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom);
 };
 }  // namespace ros2

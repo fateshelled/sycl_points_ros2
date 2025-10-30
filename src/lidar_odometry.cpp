@@ -334,8 +334,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_kdtree_build = 0.0;
     const auto src_tree = time_utils::measure_execution(
         [&]() {
-            const auto tree =
-                sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
+            const auto tree = sycl_points::algorithms::knn::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
             return tree;
         },
         dt_kdtree_build);
@@ -432,8 +431,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 // Voxel downsampling
                 this->submap_voxel_filter_->downsampling(*this->submap_pc_, *this->submap_pc_);
 
-                this->submap_tree_ =
-                    sycl_points::algorithms::knn_search::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
+                this->submap_tree_ = sycl_points::algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
 
                 this->submap_tree_
                     ->knn_search_async(*this->submap_pc_, this->params_.submap_covariance_neighbor_num,

@@ -210,7 +210,14 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         {
             const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust/type", "NONE");
             params.gicp.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
-            params.gicp.robust.scale = this->declare_parameter<double>("gicp/robust/scale", params.gicp.robust.scale);
+            params.gicp.robust.auto_scale =
+                this->declare_parameter<bool>("gicp/robust/auto_scale", params.gicp.robust.auto_scale);
+            params.gicp.robust.init_scale =
+                this->declare_parameter<double>("gicp/robust/init_scale", params.gicp.robust.init_scale);
+            params.gicp.robust.scaling_factor =
+                this->declare_parameter<double>("gicp/robust/scaling_factor", params.gicp.robust.scaling_factor);
+            params.gicp.robust.scaling_iter =
+                this->declare_parameter<int>("gicp/robust/scaling_iter", params.gicp.robust.scaling_iter);
         }
 
         // photometric
@@ -319,8 +326,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 }
             }
             if (is_first_frame) {
-                sycl_points::algorithms::transform::transform(*this->preprocessed_pc_,
-                                                              this->params_.initial_pose.matrix());
+                algorithms::transform::transform(*this->preprocessed_pc_, this->params_.initial_pose.matrix());
             }
         },
         dt_preprocessing);
@@ -334,7 +340,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_kdtree_build = 0.0;
     const auto src_tree = time_utils::measure_execution(
         [&]() {
-            const auto tree = sycl_points::algorithms::knn::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
+            const auto tree = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
             return tree;
         },
         dt_kdtree_build);
@@ -343,11 +349,12 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_covariance = 0.0;
     time_utils::measure_execution(
         [&]() {
-            auto events = src_tree
-                ->knn_search_async(*this->preprocessed_pc_, this->params_.scan_covariance_neighbor_num,
-                                   this->knn_result_);
-            events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_, events.evs);
-            events += algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_, events.evs);
+            auto events = src_tree->knn_search_async(*this->preprocessed_pc_,
+                                                     this->params_.scan_covariance_neighbor_num, this->knn_result_);
+            events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_,
+                                                                        events.evs);
+            events +=
+                algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_, events.evs);
             events += algorithms::covariance::covariance_update_plane_async(*this->preprocessed_pc_, events.evs);
             events.wait();
         },
@@ -431,13 +438,13 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 // Voxel downsampling
                 this->submap_voxel_filter_->downsampling(*this->submap_pc_, *this->submap_pc_);
 
-                this->submap_tree_ = sycl_points::algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
+                this->submap_tree_ = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
 
-                auto events = this->submap_tree_
-                    ->knn_search_async(*this->submap_pc_, this->params_.submap_covariance_neighbor_num,
-                                       this->knn_result_);
+                auto events = this->submap_tree_->knn_search_async(
+                    *this->submap_pc_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
 
-                events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_, events.evs);
+                events +=
+                    algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_, events.evs);
                 events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_, events.evs);
                 events += algorithms::covariance::covariance_update_plane_async(*this->submap_pc_, events.evs);
                 events.wait();

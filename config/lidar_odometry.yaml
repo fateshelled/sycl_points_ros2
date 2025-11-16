@@ -5,9 +5,13 @@ lidar_odometry_node:
     # intel or nvidia or amd
     sycl/device_vendor: intel
 
-    # x, y, z, qx, qy, qz, qw
-    initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-    T_base_link_to_lidar: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    T_base_link_to_lidar/x: 0.0
+    T_base_link_to_lidar/y: 0.0
+    T_base_link_to_lidar/z: 0.0
+    T_base_link_to_lidar/qx: 0.0
+    T_base_link_to_lidar/qy: 0.0
+    T_base_link_to_lidar/qz: 0.0
+    T_base_link_to_lidar/qw: 1.0
 
     scan/covariance/neighbor_num: 20
     scan/preprocess/box_filter/enable: true
@@ -25,11 +29,18 @@ lidar_odometry_node:
 
     submap/covariance/neighbor_num: 20
     submap/color_gradient/neighbor_num: 10
-    submap/downsampling/voxel/voxel_size: 1.0
+    submap/voxel_size: 1.0
     keyframe/angle_threshold_degrees: 20.0
     keyframe/distance_threshold: 2.0
     keyframe/inlier_ratio_threshold: 0.7
     keyframe/keyframe_time_threshold_seconds: 1.0
+    occupancy_grid_map/enable: true
+    occupancy_grid_map/log_odds_hit: 0.5
+    occupancy_grid_map/log_odds_miss: -0.01
+    occupancy_grid_map/log_odds_limits/min: -4.0
+    occupancy_grid_map/log_odds_limits/max: 4.0
+    occupancy_grid_map/occupied_threshold: 0.8
+    occupancy_grid_map/visibility_decay_range: 100.0
 
     gicp/min_num_points: 100
     gicp/max_iterations: 8

@@ -33,26 +33,12 @@ def declare_params_from_yaml(yaml_path: str, target_node="lidar_odometry_node"):
     return launch_args, node_args
 
 
-def get_T_base_link_to_lidar(yaml_path: str, target_node="lidar_odometry_node"):
-    with open(yaml_path, "r") as f:
-        all_params = yaml.safe_load(f)
-
-    for node_name in all_params.keys():
-        if node_name == target_node:
-            node_params: dict = all_params[node_name]["ros__parameters"]
-            for name, value in node_params.items():
-                if name == "T_base_link_to_lidar":
-                    return value
-    return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-
-
 def generate_launch_description():
     package_name = "sycl_points_ros2"
     node_name = "lidar_odometry_node"
     package_dir = get_package_share_directory(package_name)
     param_yaml = os.path.join(package_dir, "config", "lidar_odometry.yaml")
     launch_args, node_args = declare_params_from_yaml(param_yaml, node_name)
-    T_base_link_to_lidar = get_T_base_link_to_lidar(param_yaml, node_name)
     launch_args.extend(
         [
             DeclareLaunchArgument(
@@ -97,13 +83,14 @@ def generate_launch_description():
                 Node(
                     package="tf2_ros",
                     executable="static_transform_publisher",
-                    arguments=["--x", str(T_base_link_to_lidar[0])]
-                    + ["--y", str(T_base_link_to_lidar[1])]
-                    + ["--z", str(T_base_link_to_lidar[2])]
-                    + ["--qx", str(T_base_link_to_lidar[3])]
-                    + ["--qy", str(T_base_link_to_lidar[4])]
-                    + ["--qz", str(T_base_link_to_lidar[5])]
-                    + ["--qw", str(T_base_link_to_lidar[6])]
+                    arguments=[
+                        "--x", LaunchConfiguration("T_base_link_to_lidar/x"),
+                        "--y", LaunchConfiguration("T_base_link_to_lidar/y"),
+                        "--z", LaunchConfiguration("T_base_link_to_lidar/z"),
+                        "--qx", LaunchConfiguration("T_base_link_to_lidar/qx"),
+                        "--qy", LaunchConfiguration("T_base_link_to_lidar/qy"),
+                        "--qz", LaunchConfiguration("T_base_link_to_lidar/qz"),
+                        "--qw", LaunchConfiguration("T_base_link_to_lidar/qw"),]
                     + ["--frame-id", "base_link"]
                     + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
                 ),
@@ -111,7 +98,7 @@ def generate_launch_description():
                     name="sycl_points_container",
                     namespace="",
                     package="rclcpp_components",
-                    executable="component_container",    # SingleThreadedExecutor
+                    executable="component_container",  # SingleThreadedExecutor
                     # executable="component_container_mt",  # MultiThreadedExecutor
                     output="screen",
                     emulate_tty=True,

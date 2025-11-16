@@ -59,8 +59,27 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
                 this->params_.scan_downsampling_polar_elevation_size,
                 this->params_.scan_downsampling_polar_azimuth_size, coord_system);
         }
-        this->submap_voxel_filter_ = std::make_shared<algorithms::filter::VoxelGrid>(
-            *this->queue_ptr_, this->params_.submap_downsampling_voxel_size);
+    }
+
+    // Submapping
+    {
+        if (this->params_.occupancy_grid_map_enable) {
+            this->occupancy_grid_ = std::make_shared<algorithms::mapping::OccupancyGridMap>(
+                *this->queue_ptr_, this->params_.submap_voxel_size);
+
+            this->occupancy_grid_->set_log_odds_hit(this->params_.occupancy_grid_map_log_odds_hit);
+            this->occupancy_grid_->set_log_odds_miss(this->params_.occupancy_grid_map_log_odds_miss);
+            this->occupancy_grid_->set_log_odds_limits(this->params_.occupancy_grid_map_log_odds_limits_min,
+                                                       this->params_.occupancy_grid_map_log_odds_limits_max);
+            this->occupancy_grid_->set_occupancy_threshold(this->params_.occupancy_grid_map_occupied_threshold);
+            this->occupancy_grid_->set_visibility_decay_range(this->params_.occupancy_grid_map_visibility_decay_range);
+        } else {
+            this->submap_voxel_ =
+                std::make_shared<algorithms::mapping::VoxelHashMap>(*this->queue_ptr_, this->params_.submap_voxel_size);
+        }
+    }
+    // Registration
+    {
         this->gicp_ =
             std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->params_.gicp);
     }
@@ -169,8 +188,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
     // submap and keyframe
     {
-        params.submap_downsampling_voxel_size = this->declare_parameter<double>("submap/downsampling/voxel/voxel_size",
-                                                                                params.submap_downsampling_voxel_size);
+        params.submap_voxel_size = this->declare_parameter<double>("submap/voxel_size", params.submap_voxel_size);
         params.submap_covariance_neighbor_num =
             this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
         params.submap_color_gradient_neighbor_num = this->declare_parameter<int>(
@@ -184,6 +202,21 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             "keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
         params.keyframe_time_threshold_seconds =
             this->declare_parameter<double>("keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
+
+        params.occupancy_grid_map_enable =
+            this->declare_parameter<bool>("occupancy_grid_map/enable", params.occupancy_grid_map_enable);
+        params.occupancy_grid_map_log_odds_hit =
+            this->declare_parameter<double>("occupancy_grid_map/log_odds_hit", params.occupancy_grid_map_log_odds_hit);
+        params.occupancy_grid_map_log_odds_miss = this->declare_parameter<double>(
+            "occupancy_grid_map/log_odds_miss", params.occupancy_grid_map_log_odds_miss);
+        params.occupancy_grid_map_log_odds_limits_min = this->declare_parameter<double>(
+            "occupancy_grid_map/log_odds_limits/min", params.occupancy_grid_map_log_odds_limits_min);
+        params.occupancy_grid_map_log_odds_limits_max = this->declare_parameter<double>(
+            "occupancy_grid_map/log_odds_limits/max", params.occupancy_grid_map_log_odds_limits_max);
+        params.occupancy_grid_map_occupied_threshold = this->declare_parameter<double>(
+            "occupancy_grid_map/occupied_threshold", params.occupancy_grid_map_occupied_threshold);
+        params.occupancy_grid_map_visibility_decay_range = this->declare_parameter<double>(
+            "occupancy_grid_map/visibility_decay_range", params.occupancy_grid_map_visibility_decay_range);
     }
 
     // Registration
@@ -265,12 +298,16 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         params.base_link_id = this->declare_parameter<std::string>("base_link_id", "base_link");
         {
             // x, y, z, qx, qy, qz, qw
-            const auto T = this->declare_parameter<std::vector<double>>("T_base_link_to_lidar",
-                                                                        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0});
-            if (T.size() != 7) throw std::runtime_error("invalid T_base_link_to_lidar");
+            const auto x = this->declare_parameter<double>("T_base_link_to_lidar/x", 0.0);
+            const auto y = this->declare_parameter<double>("T_base_link_to_lidar/y", 0.0);
+            const auto z = this->declare_parameter<double>("T_base_link_to_lidar/z", 0.0);
+            const auto qx = this->declare_parameter<double>("T_base_link_to_lidar/qx", 0.0);
+            const auto qy = this->declare_parameter<double>("T_base_link_to_lidar/qy", 0.0);
+            const auto qz = this->declare_parameter<double>("T_base_link_to_lidar/qz", 0.0);
+            const auto qw = this->declare_parameter<double>("T_base_link_to_lidar/qw", 1.0);
             params.T_base_link_to_lidar.setIdentity();
-            params.T_base_link_to_lidar.translation() << T[0], T[1], T[2];
-            const Eigen::Quaternionf quat(T[6], T[3], T[4], T[5]);
+            params.T_base_link_to_lidar.translation() << x, y, z;
+            const Eigen::Quaternionf quat(qw, qx, qy, qz);
             params.T_base_link_to_lidar.matrix().block<3, 3>(0, 0) = quat.matrix();
 
             params.T_lidar_to_base_link = params.T_base_link_to_lidar.inverse();
@@ -360,14 +397,58 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         },
         dt_covariance);
 
+    auto build_submap = [&](const PointCloudShared& pc) {
+        if (this->params_.occupancy_grid_map_enable) {
+            this->occupancy_grid_->add_point_cloud(pc, Eigen::Isometry3f::Identity());
+            this->occupancy_grid_->extract_occupied_points(*this->submap_pc_, this->odom_, 30.0f);
+            // 360deg x 180 deg
+            // this->occupancy_grid_->extract_visible_points(  //
+            //     *this->submap_pc_, this->odom_, 30.0f, 2.0f * M_PIf, M_PIf);
+        } else {
+            this->submap_voxel_->add_point_cloud(pc);
+            this->submap_voxel_->downsampling(*this->submap_pc_, this->odom_.translation(), 30.0f);
+        }
+
+        this->submap_tree_ = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
+
+        auto events = this->submap_tree_->knn_search_async(
+            *this->submap_pc_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
+
+        sycl_utils::events grad_events;
+        if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
+            if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
+                grad_events += this->submap_tree_->knn_search_async(
+                    *this->submap_pc_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
+                grad_events += algorithms::color_gradient::compute_color_gradients_async(
+                    *this->submap_pc_, this->knn_result_, grad_events.evs);
+            } else {
+                grad_events += algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_,
+                                                                                         this->knn_result_, events.evs);
+            }
+        } else if (this->submap_pc_->has_intensity() && this->params_.gicp.photometric.enable) {
+            if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
+                grad_events += this->submap_tree_->knn_search_async(
+                    *this->submap_pc_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
+                grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
+                    *this->submap_pc_, this->knn_result_, grad_events.evs);
+            } else {
+                grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
+                    *this->submap_pc_, this->knn_result_, events.evs);
+            }
+            std::cout << "compute intensity gradient" << std::endl;
+        }
+        events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_, events.evs);
+        events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_, events.evs);
+        events += algorithms::covariance::covariance_update_plane_async(*this->submap_pc_, events.evs);
+        events.wait();
+        grad_events.wait();
+    };
+
     // is first frame
     if (is_first_frame) {
-        // copy to submap
-        this->submap_pc_ = std::make_shared<PointCloudShared>(*this->preprocessed_pc_);
-        this->submap_tree_ = src_tree;
-        if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
-            algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_, this->knn_result_).wait();
-        }
+        this->submap_pc_ = std::make_shared<PointCloudShared>(*this->queue_ptr_);
+        build_submap(*this->preprocessed_pc_);
+
         this->last_keyframe_time_ = timestamp;
         return;
     }
@@ -409,12 +490,23 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 return false;
             }
 
+            // for octomap
+            if (this->params_.occupancy_grid_map_enable) {
+                const auto aligned = this->gicp_->get_aligned_point_cloud();
+                if (aligned == nullptr) {
+                    RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
+                    return false;
+                }
+                build_submap(*aligned);
+                return true;
+            }
+
             // calculate delta pose
             const auto delta_pose = this->last_keyframe_pose_.inverse() * reg_result.T;
 
             // calculate moving distance and angle
             const auto distance = delta_pose.translation().norm();
-            const auto angle = Eigen::AngleAxisf(delta_pose.rotation()).angle() * (180.0f / M_PIf);
+            const auto angle = std::fabs(Eigen::AngleAxisf(delta_pose.rotation()).angle()) * (180.0f / M_PIf);
 
             // calculate delta time
             const auto delta_time = this->last_keyframe_time_ > 0.0 ? timestamp - this->last_keyframe_time_
@@ -432,34 +524,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                     RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
                     return false;
                 }
-                // add new points
-                this->submap_pc_->extend(*aligned);
 
-                // Voxel downsampling
-                this->submap_voxel_filter_->downsampling(*this->submap_pc_, *this->submap_pc_);
-
-                this->submap_tree_ = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
-
-                auto events = this->submap_tree_->knn_search_async(
-                    *this->submap_pc_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
-
-                events +=
-                    algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_, events.evs);
-                events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_, events.evs);
-                events += algorithms::covariance::covariance_update_plane_async(*this->submap_pc_, events.evs);
-                events.wait();
-
-                if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
-                    if (this->params_.submap_covariance_neighbor_num !=
-                        this->params_.submap_color_gradient_neighbor_num) {
-                        this->submap_tree_
-                            ->knn_search_async(*this->submap_pc_, this->params_.submap_color_gradient_neighbor_num,
-                                               this->knn_result_)
-                            .wait();
-                    }
-                    algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_, this->knn_result_)
-                        .wait();
-                }
+                build_submap(*aligned);
                 return true;
             }
             return false;
@@ -472,7 +538,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         [&]() { return toROS2msg(*this->preprocessed_pc_, msg->header); }, dt_to_ros2_msg);
     auto submap_msg = time_utils::measure_execution(
         [&]() {
-            if (true) {
+            if (update_submap) {
                 auto submap_msg = toROS2msg(*this->submap_pc_, msg->header);
                 submap_msg->header.frame_id = this->params_.odom_frame_id;
                 return submap_msg;
@@ -493,7 +559,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 this->publish_keyframe_pose(msg->header, this->last_keyframe_pose_);
                 RCLCPP_INFO(this->get_logger(), "ADD Keyframe");
             }
-            if (submap_msg != nullptr && this->pub_submap_->get_subscription_count() > 0) {
+            if (update_submap && this->pub_submap_->get_subscription_count() > 0) {
                 this->pub_submap_->publish(*submap_msg);
             }
         },

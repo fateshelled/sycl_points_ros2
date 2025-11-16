@@ -6,6 +6,8 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sycl_points/algorithms/mapping/occupancy_grid_map.hpp>
+#include <sycl_points/algorithms/mapping/voxel_hash_map.hpp>
 #include <sycl_points/algorithms/knn/kdtree.hpp>
 #include <sycl_points/algorithms/polar_downsampling.hpp>
 #include <sycl_points/algorithms/preprocess_filter.hpp>
@@ -41,13 +43,21 @@ public:
         bool scan_preprocess_random_sampling_enable = true;
         int32_t scan_preprocess_random_sampling_num = 1000;
 
-        float submap_downsampling_voxel_size = 1.0f;
+        float submap_voxel_size = 1.0f;
         int32_t submap_covariance_neighbor_num = 10;
         int32_t submap_color_gradient_neighbor_num = 10;
         float keyframe_inlier_ratio_threshold = 0.7f;
         float keyframe_distance_threshold = 2.0f;
         float keyframe_angle_threshold_degrees = 20.0f;
         float keyframe_time_threshold_seconds = 1.0f;
+
+        bool occupancy_grid_map_enable = true;
+        float occupancy_grid_map_log_odds_hit = 0.8;
+        float occupancy_grid_map_log_odds_miss = -0.05;
+        float occupancy_grid_map_log_odds_limits_min = -1.0;
+        float occupancy_grid_map_log_odds_limits_max = 4.0;
+        float occupancy_grid_map_occupied_threshold = 0.5;
+        float occupancy_grid_map_visibility_decay_range = 100.0;
 
         size_t gicp_min_num_points = 100;
         algorithms::registration::RegistrationParams gicp;
@@ -77,12 +87,14 @@ private:
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
     PointCloudShared::Ptr gicp_input_pc_ = nullptr;
     PointCloudShared::Ptr submap_pc_ = nullptr;
+
+    algorithms::mapping::VoxelHashMap::Ptr submap_voxel_ = nullptr;
+    algorithms::mapping::OccupancyGridMap::Ptr occupancy_grid_ = nullptr;
     algorithms::knn::KDTree::Ptr submap_tree_ = nullptr;
     algorithms::knn::KNNResult knn_result_;
 
     algorithms::filter::PreprocessFilter::Ptr preprocess_filter_ = nullptr;
     algorithms::filter::VoxelGrid::Ptr voxel_filter_ = nullptr;
-    algorithms::filter::VoxelGrid::Ptr submap_voxel_filter_ = nullptr;
     algorithms::filter::PolarGrid::Ptr polar_filter_ = nullptr;
     algorithms::registration::RegistrationGICP::Ptr gicp_ = nullptr;
 

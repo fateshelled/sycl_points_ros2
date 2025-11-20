@@ -392,7 +392,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                                                         events.evs);
             events +=
                 algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_, events.evs);
-            events += algorithms::covariance::covariance_update_plane_async(*this->preprocessed_pc_, events.evs);
+            events += algorithms::covariance::covariance_normalize_async(*this->preprocessed_pc_, events.evs);
             events.wait();
         },
         dt_covariance);
@@ -439,7 +439,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         }
         events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_, events.evs);
         events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_, events.evs);
-        events += algorithms::covariance::covariance_update_plane_async(*this->submap_pc_, events.evs);
+        events += algorithms::covariance::covariance_normalize_async(*this->preprocessed_pc_, events.evs);
         events.wait();
         grad_events.wait();
     };

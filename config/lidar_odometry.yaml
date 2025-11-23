@@ -30,10 +30,12 @@ lidar_odometry_node:
     submap/covariance/neighbor_num: 20
     submap/color_gradient/neighbor_num: 10
     submap/voxel_size: 1.0
+    submap/max_distance_range: 30.0
     keyframe/angle_threshold_degrees: 20.0
     keyframe/distance_threshold: 2.0
     keyframe/inlier_ratio_threshold: 0.7
-    keyframe/keyframe_time_threshold_seconds: 1.0
+    keyframe/time_threshold_seconds: 1.0
+    keyframe/point_random_sampling_num: 2000
     occupancy_grid_map/enable: true
     occupancy_grid_map/log_odds_hit: 0.5
     occupancy_grid_map/log_odds_miss: -0.01

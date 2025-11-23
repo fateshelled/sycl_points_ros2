@@ -46,6 +46,8 @@ public:
         float submap_voxel_size = 1.0f;
         int32_t submap_covariance_neighbor_num = 10;
         int32_t submap_color_gradient_neighbor_num = 10;
+        float submap_max_distance_range = 30.0f;
+        int32_t keyframe_point_random_sampling_num = 2000;
         float keyframe_inlier_ratio_threshold = 0.7f;
         float keyframe_distance_threshold = 2.0f;
         float keyframe_angle_threshold_degrees = 20.0f;
@@ -86,7 +88,10 @@ private:
     PointCloudShared::Ptr scan_pc_ = nullptr;
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
     PointCloudShared::Ptr gicp_input_pc_ = nullptr;
-    PointCloudShared::Ptr submap_pc_ = nullptr;
+    PointCloudShared::Ptr keyframe_pc_ = nullptr;
+    PointCloudShared::Ptr submap_pc_ptr_ = nullptr;
+    PointCloudShared::Ptr submap_pc_tmp_ = nullptr;
+    bool is_first_frame_ = true;
 
     algorithms::mapping::VoxelHashMap::Ptr submap_voxel_ = nullptr;
     algorithms::mapping::OccupancyGridMap::Ptr occupancy_grid_ = nullptr;

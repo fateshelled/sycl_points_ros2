@@ -27,10 +27,12 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
 
     // initialize buffer
     {
-        this->msg_data_buffer_ = std::make_shared<shared_vector<uint8_t>>(*this->queue_ptr_->ptr);
+        this->msg_data_buffer_.reset(new shared_vector<uint8_t>(*this->queue_ptr_->ptr));
         this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
         this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
         this->gicp_input_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+        this->keyframe_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+        this->submap_pc_tmp_.reset(new PointCloudShared(*this->queue_ptr_));
     }
 
     // set Initial pose
@@ -193,6 +195,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             this->declare_parameter<int>("submap/covariance/neighbor_num", params.submap_covariance_neighbor_num);
         params.submap_color_gradient_neighbor_num = this->declare_parameter<int>(
             "submap/color_gradient/neighbor_num", params.submap_color_gradient_neighbor_num);
+        params.submap_max_distance_range =
+            this->declare_parameter<double>("submap/max_distance_range", params.submap_max_distance_range);
 
         params.keyframe_inlier_ratio_threshold =
             this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
@@ -329,7 +333,6 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
     const double timestamp = rclcpp::Time(msg->header.stamp).seconds();
-    const bool is_first_frame = (this->submap_pc_ == nullptr);
 
     double dt_from_ros2_msg = 0.0;
     time_utils::measure_execution(
@@ -361,9 +364,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 } else {
                     *this->preprocessed_pc_ = *this->scan_pc_;  // copy
                 }
-            }
-            if (is_first_frame) {
-                algorithms::transform::transform(*this->preprocessed_pc_, this->params_.initial_pose.matrix());
             }
         },
         dt_preprocessing);
@@ -397,59 +397,71 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         },
         dt_covariance);
 
-    auto build_submap = [&](const PointCloudShared& pc) {
+    auto build_submap = [&](const PointCloudShared::Ptr& pc, const Eigen::Isometry3f& current_pose) {
+        // random sampling
+        preprocess_filter_->random_sampling(*pc, *this->keyframe_pc_, this->params_.keyframe_point_random_sampling_num);
+
+        // mapping
         if (this->params_.occupancy_grid_map_enable) {
-            this->occupancy_grid_->add_point_cloud(pc, Eigen::Isometry3f::Identity());
-            this->occupancy_grid_->extract_occupied_points(*this->submap_pc_, this->odom_, 30.0f);
-            // 360deg x 180 deg
+            this->occupancy_grid_->add_point_cloud(*this->keyframe_pc_, current_pose);
+            this->occupancy_grid_->extract_occupied_points(*this->submap_pc_tmp_, this->odom_,
+                                                           this->params_.submap_max_distance_range);
+            // 360 deg x 180 deg
             // this->occupancy_grid_->extract_visible_points(  //
-            //     *this->submap_pc_, this->odom_, 30.0f, 2.0f * M_PIf, M_PIf);
+            //     *this->submap_pc_tmp_, this->odom_, 30.0f, 2.0f * M_PIf, M_PIf);
         } else {
-            this->submap_voxel_->add_point_cloud(pc);
-            this->submap_voxel_->downsampling(*this->submap_pc_, this->odom_.translation(), 30.0f);
+            this->submap_voxel_->add_point_cloud(*this->keyframe_pc_, current_pose);
+            this->submap_voxel_->downsampling(*this->submap_pc_tmp_, this->odom_.translation(),
+                                              this->params_.submap_max_distance_range);
         }
 
-        this->submap_tree_ = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_);
+        // copy
+        if (this->submap_pc_tmp_->size() >= this->params_.gicp_min_num_points) {
+            this->submap_pc_ptr_ = this->submap_pc_tmp_;
+        } else if (this->is_first_frame_) {
+            this->submap_pc_ptr_ = pc;
+        }
+
+        this->submap_tree_ = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_ptr_);
 
         auto events = this->submap_tree_->knn_search_async(
-            *this->submap_pc_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
+            *this->submap_pc_ptr_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
 
         sycl_utils::events grad_events;
-        if (this->submap_pc_->has_rgb() && this->params_.gicp.photometric.enable) {
+        if (this->submap_pc_ptr_->has_rgb() && this->params_.gicp.photometric.enable) {
             if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
                 grad_events += this->submap_tree_->knn_search_async(
-                    *this->submap_pc_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
+                    *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
                 grad_events += algorithms::color_gradient::compute_color_gradients_async(
-                    *this->submap_pc_, this->knn_result_, grad_events.evs);
+                    *this->submap_pc_ptr_, this->knn_result_, grad_events.evs);
             } else {
-                grad_events += algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_,
+                grad_events += algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_ptr_,
                                                                                          this->knn_result_, events.evs);
             }
-        } else if (this->submap_pc_->has_intensity() && this->params_.gicp.photometric.enable) {
+        } else if (this->submap_pc_ptr_->has_intensity() && this->params_.gicp.photometric.enable) {
             if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
                 grad_events += this->submap_tree_->knn_search_async(
-                    *this->submap_pc_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
+                    *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
                 grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
-                    *this->submap_pc_, this->knn_result_, grad_events.evs);
+                    *this->submap_pc_ptr_, this->knn_result_, grad_events.evs);
             } else {
                 grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
-                    *this->submap_pc_, this->knn_result_, events.evs);
+                    *this->submap_pc_ptr_, this->knn_result_, events.evs);
             }
             std::cout << "compute intensity gradient" << std::endl;
         }
-        events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_, events.evs);
-        events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_, events.evs);
-        events += algorithms::covariance::covariance_normalize_async(*this->submap_pc_, events.evs);
+        events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_ptr_, events.evs);
+        events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_, events.evs);
+        events += algorithms::covariance::covariance_normalize_async(*this->submap_pc_ptr_, events.evs);
         events.wait();
         grad_events.wait();
     };
 
-    // is first frame
-    if (is_first_frame) {
-        this->submap_pc_ = std::make_shared<PointCloudShared>(*this->queue_ptr_);
-        build_submap(*this->preprocessed_pc_);
+    if (this->is_first_frame_) {
+        build_submap(this->preprocessed_pc_, this->params_.initial_pose);
 
         this->last_keyframe_time_ = timestamp;
+        this->is_first_frame_ = false;
         return;
     }
 
@@ -466,7 +478,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 *this->gicp_input_pc_ = *this->preprocessed_pc_;
             }
             const auto result =
-                this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_, *this->submap_tree_, init_T.matrix());
+                this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_, init_T.matrix());
 
             // update odometry
             this->odom_ = result.T;
@@ -492,12 +504,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
             // for octomap
             if (this->params_.occupancy_grid_map_enable) {
-                const auto aligned = this->gicp_->get_aligned_point_cloud();
-                if (aligned == nullptr) {
-                    RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
-                    return false;
-                }
-                build_submap(*aligned);
+                build_submap(this->preprocessed_pc_, this->odom_);
                 return true;
             }
 
@@ -519,13 +526,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 this->last_keyframe_pose_ = reg_result.T;
                 this->last_keyframe_time_ = timestamp;
 
-                const auto aligned = this->gicp_->get_aligned_point_cloud();
-                if (aligned == nullptr) {
-                    RCLCPP_ERROR(this->get_logger(), "aligned pc is nullptr");
-                    return false;
-                }
-
-                build_submap(*aligned);
+                build_submap(this->preprocessed_pc_, this->odom_);
                 return true;
             }
             return false;
@@ -539,7 +540,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     auto submap_msg = time_utils::measure_execution(
         [&]() {
             if (update_submap) {
-                auto submap_msg = toROS2msg(*this->submap_pc_, msg->header);
+                auto submap_msg = toROS2msg(*this->submap_pc_ptr_, msg->header);
                 submap_msg->header.frame_id = this->params_.odom_frame_id;
                 return submap_msg;
             }

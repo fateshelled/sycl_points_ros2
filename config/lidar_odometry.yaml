@@ -13,7 +13,7 @@ lidar_odometry_node:
     T_base_link_to_lidar/qz: 0.0
     T_base_link_to_lidar/qw: 1.0
 
-    scan/covariance/neighbor_num: 20
+    scan/covariance/neighbor_num: 30
     scan/preprocess/box_filter/enable: true
     scan/preprocess/box_filter/max: 50.0
     scan/preprocess/box_filter/min: 2.0
@@ -27,15 +27,15 @@ lidar_odometry_node:
     scan/downsampling/polar/azimuth_size: 0.05235987755982989   # 3 degrees
     scan/downsampling/polar/coord_system: CAMERA # CAMERA or LIDAR
 
-    submap/covariance/neighbor_num: 20
-    submap/color_gradient/neighbor_num: 10
+    submap/covariance/neighbor_num: 30
+    submap/color_gradient/neighbor_num: 30
     submap/voxel_size: 1.0
     submap/max_distance_range: 30.0
-    keyframe/angle_threshold_degrees: 20.0
-    keyframe/distance_threshold: 2.0
+    submap/point_random_sampling_num: 2000
     keyframe/inlier_ratio_threshold: 0.7
+    keyframe/distance_threshold: 2.0
+    keyframe/angle_threshold_degrees: 20.0
     keyframe/time_threshold_seconds: 1.0
-    keyframe/point_random_sampling_num: 2000
     occupancy_grid_map/enable: true
     occupancy_grid_map/log_odds_hit: 0.5
     occupancy_grid_map/log_odds_miss: -0.01
@@ -44,20 +44,20 @@ lidar_odometry_node:
     occupancy_grid_map/occupied_threshold: 0.8
     occupancy_grid_map/visibility_decay_range: 100.0
 
-    gicp/min_num_points: 100
-    gicp/max_iterations: 8
+    gicp/min_num_points: 300
+    gicp/max_iterations: 4
     gicp/lambda: 1.0e-4
     gicp/max_correspondence_distance: 2.0
     gicp/criteria/translation: 1.0e-3
     gicp/criteria/rotation: 1.0e-6
-    gicp/robust/type: NONE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
+    gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
     gicp/robust/auto_scale: true
     gicp/robust/init_scale: 10.0
     gicp/robust/scaling_factor: 0.5
     gicp/robust/scaling_iter: 4
     gicp/photometric/enable: false
     gicp/photometric/photometric_weight: 0.2
-    gicp/optimization_method: DOGLEG  # GN, LM, DOGLEG
+    gicp/optimization_method: GN  # GN, LM, DOGLEG
     gicp/lm/max_inner_iterations: 10
     gicp/lm/lambda_factor: 10.0
     gicp/lm/max_lambda: 1.0e+6

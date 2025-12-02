@@ -197,6 +197,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             "submap/color_gradient/neighbor_num", params.submap_color_gradient_neighbor_num);
         params.submap_max_distance_range =
             this->declare_parameter<double>("submap/max_distance_range", params.submap_max_distance_range);
+        params.submap_point_random_sampling_num =
+            this->declare_parameter<int>("submap/point_random_sampling_num", params.submap_point_random_sampling_num);
 
         params.keyframe_inlier_ratio_threshold =
             this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
@@ -390,16 +392,16 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                                      this->params_.scan_covariance_neighbor_num, this->knn_result_);
             events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_,
                                                                         events.evs);
-            events +=
-                algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_, events.evs);
+            // events +=
+            //     algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_, events.evs);
             events += algorithms::covariance::covariance_normalize_async(*this->preprocessed_pc_, events.evs);
-            events.wait();
+            events.wait_and_throw();
         },
         dt_covariance);
 
     auto build_submap = [&](const PointCloudShared::Ptr& pc, const Eigen::Isometry3f& current_pose) {
         // random sampling
-        preprocess_filter_->random_sampling(*pc, *this->keyframe_pc_, this->params_.keyframe_point_random_sampling_num);
+        preprocess_filter_->random_sampling(*pc, *this->keyframe_pc_, this->params_.submap_point_random_sampling_num);
 
         // mapping
         if (this->params_.occupancy_grid_map_enable) {
@@ -448,13 +450,13 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
                     *this->submap_pc_ptr_, this->knn_result_, events.evs);
             }
-            std::cout << "compute intensity gradient" << std::endl;
         }
-        events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_ptr_, events.evs);
-        events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_, events.evs);
-        events += algorithms::covariance::covariance_normalize_async(*this->submap_pc_ptr_, events.evs);
-        events.wait();
-        grad_events.wait();
+        events +=
+            algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_ptr_, events.evs);
+        // events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_, events.evs);
+        events += algorithms::covariance::covariance_update_plane_async(*this->submap_pc_ptr_, events.evs);
+        events.wait_and_throw();
+        grad_events.wait_and_throw();
     };
 
     if (this->is_first_frame_) {
@@ -558,7 +560,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             }
             if (update_submap) {
                 this->publish_keyframe_pose(msg->header, this->last_keyframe_pose_);
-                RCLCPP_INFO(this->get_logger(), "ADD Keyframe");
             }
             if (update_submap && this->pub_submap_->get_subscription_count() > 0) {
                 this->pub_submap_->publish(*submap_msg);

@@ -47,7 +47,7 @@ public:
         int32_t submap_covariance_neighbor_num = 10;
         int32_t submap_color_gradient_neighbor_num = 10;
         float submap_max_distance_range = 30.0f;
-        int32_t keyframe_point_random_sampling_num = 2000;
+        int32_t submap_point_random_sampling_num = 2000;
         float keyframe_inlier_ratio_threshold = 0.7f;
         float keyframe_distance_threshold = 2.0f;
         float keyframe_angle_threshold_degrees = 20.0f;

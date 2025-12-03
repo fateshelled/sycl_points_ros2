@@ -54,12 +54,13 @@ public:
         float keyframe_time_threshold_seconds = 1.0f;
 
         bool occupancy_grid_map_enable = true;
-        float occupancy_grid_map_log_odds_hit = 0.8;
-        float occupancy_grid_map_log_odds_miss = -0.05;
-        float occupancy_grid_map_log_odds_limits_min = -1.0;
-        float occupancy_grid_map_log_odds_limits_max = 4.0;
-        float occupancy_grid_map_occupied_threshold = 0.5;
-        float occupancy_grid_map_visibility_decay_range = 100.0;
+        float occupancy_grid_map_log_odds_hit = 0.8f;
+        float occupancy_grid_map_log_odds_miss = -0.05f;
+        float occupancy_grid_map_log_odds_limits_min = -1.0f;
+        float occupancy_grid_map_log_odds_limits_max = 4.0f;
+        float occupancy_grid_map_occupied_threshold = 0.5f;
+        bool occupancy_grid_map_enable_pruning = true;
+        uint32_t occupancy_grid_map_stale_frame_threshold = 100U;
 
         size_t gicp_min_num_points = 100;
         algorithms::registration::RegistrationParams gicp;

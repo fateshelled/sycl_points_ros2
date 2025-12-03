@@ -74,7 +74,8 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
             this->occupancy_grid_->set_log_odds_limits(this->params_.occupancy_grid_map_log_odds_limits_min,
                                                        this->params_.occupancy_grid_map_log_odds_limits_max);
             this->occupancy_grid_->set_occupancy_threshold(this->params_.occupancy_grid_map_occupied_threshold);
-            this->occupancy_grid_->set_visibility_decay_range(this->params_.occupancy_grid_map_visibility_decay_range);
+            this->occupancy_grid_->set_voxel_pruning_enabled(this->params_.occupancy_grid_map_enable_pruning);
+            this->occupancy_grid_->set_stale_frame_threshold(this->params_.occupancy_grid_map_stale_frame_threshold);
         } else {
             this->submap_voxel_ =
                 std::make_shared<algorithms::mapping::VoxelHashMap>(*this->queue_ptr_, this->params_.submap_voxel_size);
@@ -96,18 +97,16 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // Publisher
     {
         this->pub_preprocessed_ =
-            this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::SensorDataQoS());
+            this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/preprocessed", rclcpp::QoS(5));
 
-        auto submap_qos = rclcpp::QoS(1);
-        submap_qos.durability(rclcpp::DurabilityPolicy::TransientLocal);
-        this->pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/submap", submap_qos);
+        this->pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("sycl_lo/submap", rclcpp::QoS(5));
 
-        this->pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/odom", rclcpp::QoS(10));
-        this->pub_pose_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("sycl_lo/pose", rclcpp::QoS(10));
+        this->pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/odom", rclcpp::QoS(5));
+        this->pub_pose_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("sycl_lo/pose", rclcpp::QoS(5));
         this->pub_keyframe_pose_ =
-            this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/keyframe/pose", rclcpp::QoS(10));
+            this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/keyframe/pose", rclcpp::QoS(5));
 
-        this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+        this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this, rclcpp::QoS(1000));
     }
 
     RCLCPP_INFO(this->get_logger(), "Subscribe PointCloud: %s", this->sub_pc_->get_topic_name());
@@ -221,8 +220,10 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             "occupancy_grid_map/log_odds_limits/max", params.occupancy_grid_map_log_odds_limits_max);
         params.occupancy_grid_map_occupied_threshold = this->declare_parameter<double>(
             "occupancy_grid_map/occupied_threshold", params.occupancy_grid_map_occupied_threshold);
-        params.occupancy_grid_map_visibility_decay_range = this->declare_parameter<double>(
-            "occupancy_grid_map/visibility_decay_range", params.occupancy_grid_map_visibility_decay_range);
+        params.occupancy_grid_map_enable_pruning = this->declare_parameter<bool>(
+            "occupancy_grid_map/enable_pruning", params.occupancy_grid_map_enable_pruning);
+        params.occupancy_grid_map_stale_frame_threshold = this->declare_parameter<int>(
+            "occupancy_grid_map/stale_frame_threshold", params.occupancy_grid_map_stale_frame_threshold);
     }
 
     // Registration

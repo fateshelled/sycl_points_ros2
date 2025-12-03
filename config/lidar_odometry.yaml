@@ -42,7 +42,8 @@ lidar_odometry_node:
     occupancy_grid_map/log_odds_limits/min: -4.0
     occupancy_grid_map/log_odds_limits/max: 4.0
     occupancy_grid_map/occupied_threshold: 0.8
-    occupancy_grid_map/visibility_decay_range: 100.0
+    occupancy_grid_map/enable_pruning: true
+    occupancy_grid_map/stale_frame_threshold: 200
 
     gicp/min_num_points: 300
     gicp/max_iterations: 4
@@ -57,13 +58,13 @@ lidar_odometry_node:
     gicp/robust/scaling_iter: 4
     gicp/photometric/enable: false
     gicp/photometric/photometric_weight: 0.2
-    gicp/optimization_method: GN  # GN, LM, DOGLEG
+    gicp/optimization_method: DOGLEG  # GN, LM, DOGLEG
     gicp/lm/max_inner_iterations: 10
     gicp/lm/lambda_factor: 10.0
     gicp/lm/max_lambda: 1.0e+6
     gicp/lm/min_lambda: 1.0e-6
     gicp/dogleg/initial_trust_region_radius: 1.0
-    gicp/dogleg/max_trust_region_radius: 10.0
+    gicp/dogleg/max_trust_region_radius: 5.0
     gicp/dogleg/min_trust_region_radius: 1.0e-3
     gicp/dogleg/eta1: 0.25
     gicp/dogleg/eta2: 0.75

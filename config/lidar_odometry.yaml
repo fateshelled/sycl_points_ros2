@@ -55,7 +55,7 @@ lidar_odometry_node:
     gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
     gicp/robust/auto_scale: true
     gicp/robust/init_scale: 10.0
-    gicp/robust/min_scale: 0.625
+    gicp/robust/min_scale: 1.25
     gicp/robust/scaling_iter: 4
     gicp/photometric/enable: false
     gicp/photometric/photometric_weight: 0.2

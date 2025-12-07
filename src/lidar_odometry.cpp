@@ -183,10 +183,6 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             this->declare_parameter<double>("scan/preprocess/box_filter/min", params.scan_preprocess_box_filter_min);
         params.scan_preprocess_box_filter_max =
             this->declare_parameter<double>("scan/preprocess/box_filter/max", params.scan_preprocess_box_filter_max);
-        params.scan_preprocess_random_sampling_enable = this->declare_parameter<bool>(
-            "scan/preprocess/random_sampling/enable", params.scan_preprocess_random_sampling_enable);
-        params.scan_preprocess_random_sampling_num = this->declare_parameter<int>(
-            "scan/preprocess/random_sampling/num", params.scan_preprocess_random_sampling_num);
     }
 
     // submap and keyframe
@@ -236,6 +232,10 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
                 this->declare_parameter<double>("gicp/motion_prediction_factor", params.gicp_motion_prediction_factor);
             params.gicp_min_num_points =
                 this->declare_parameter<int>("gicp/min_num_points", params.gicp_min_num_points);
+            params.gicp_random_sampling_enable =
+                this->declare_parameter<bool>("gicp/random_sampling/enable", params.gicp_random_sampling_enable);
+            params.gicp_random_sampling_num =
+                this->declare_parameter<int>("gicp/random_sampling/num", params.gicp_random_sampling_num);
 
             params.gicp.max_iterations =
                 this->declare_parameter<int>("gicp/max_iterations", params.gicp.max_iterations);
@@ -503,9 +503,9 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 init_T = this->odom_;
             }
 
-            if (this->params_.scan_preprocess_random_sampling_enable) {
+            if (this->params_.gicp_random_sampling_enable) {
                 this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, *this->gicp_input_pc_,
-                                                          this->params_.scan_preprocess_random_sampling_num);
+                                                          this->params_.gicp_random_sampling_num);
             } else {
                 *this->gicp_input_pc_ = *this->preprocessed_pc_;
             }

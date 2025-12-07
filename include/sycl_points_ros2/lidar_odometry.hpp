@@ -39,8 +39,6 @@ public:
         bool scan_preprocess_box_filter_enable = true;
         float scan_preprocess_box_filter_min = 2.0f;
         float scan_preprocess_box_filter_max = 50.0f;
-        bool scan_preprocess_random_sampling_enable = true;
-        int32_t scan_preprocess_random_sampling_num = 1000;
 
         float submap_voxel_size = 1.0f;
         int32_t submap_covariance_neighbor_num = 10;
@@ -63,6 +61,8 @@ public:
 
         float gicp_motion_prediction_factor = 0.5f;
         size_t gicp_min_num_points = 100;
+        bool gicp_random_sampling_enable = true;
+        int32_t gicp_random_sampling_num = 1000;
         algorithms::registration::RegistrationParams gicp;
 
         std::string odom_frame_id = "odom";

@@ -38,6 +38,7 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     // set Initial pose
     {
         this->odom_ = this->params_.initial_pose;
+        this->prev_odom_ = this->params_.initial_pose;
     }
 
     // initialize keyframe
@@ -106,7 +107,8 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
         this->pub_keyframe_pose_ =
             this->create_publisher<nav_msgs::msg::Odometry>("sycl_lo/keyframe/pose", rclcpp::QoS(5));
 
-        this->tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this, rclcpp::QoS(1000));
+        this->tf_broadcaster_ =
+            std::make_unique<tf2_ros::TransformBroadcaster>(*this, tf2_ros::DynamicBroadcasterQoS(1000));
     }
 
     RCLCPP_INFO(this->get_logger(), "Subscribe PointCloud: %s", this->sub_pc_->get_topic_name());
@@ -230,6 +232,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     {
         // common
         {
+            params.gicp_motion_prediction_factor =
+                this->declare_parameter<double>("gicp/motion_prediction_factor", params.gicp_motion_prediction_factor);
             params.gicp_min_num_points =
                 this->declare_parameter<int>("gicp/min_num_points", params.gicp_min_num_points);
 
@@ -254,8 +258,8 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
                 this->declare_parameter<bool>("gicp/robust/auto_scale", params.gicp.robust.auto_scale);
             params.gicp.robust.init_scale =
                 this->declare_parameter<double>("gicp/robust/init_scale", params.gicp.robust.init_scale);
-            params.gicp.robust.scaling_factor =
-                this->declare_parameter<double>("gicp/robust/scaling_factor", params.gicp.robust.scaling_factor);
+            params.gicp.robust.min_scale =
+                this->declare_parameter<double>("gicp/robust/min_scale", params.gicp.robust.min_scale);
             params.gicp.robust.scaling_iter =
                 this->declare_parameter<int>("gicp/robust/scaling_iter", params.gicp.robust.scaling_iter);
         }
@@ -336,6 +340,9 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
 
 void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
     const double timestamp = rclcpp::Time(msg->header.stamp).seconds();
+    if (this->last_frame_time_ > 0.0) {
+        this->dt_ = static_cast<float>(timestamp - this->last_frame_time_);
+    }
 
     double dt_from_ros2_msg = 0.0;
     time_utils::measure_execution(
@@ -407,14 +414,14 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         // mapping
         if (this->params_.occupancy_grid_map_enable) {
             this->occupancy_grid_->add_point_cloud(*this->keyframe_pc_, current_pose);
-            this->occupancy_grid_->extract_occupied_points(*this->submap_pc_tmp_, this->odom_,
+            this->occupancy_grid_->extract_occupied_points(*this->submap_pc_tmp_, current_pose,
                                                            this->params_.submap_max_distance_range);
             // 360 deg x 180 deg
             // this->occupancy_grid_->extract_visible_points(  //
-            //     *this->submap_pc_tmp_, this->odom_, 30.0f, 2.0f * M_PIf, M_PIf);
+            //     *this->submap_pc_tmp_, current_pose, 30.0f, 2.0f * M_PIf, M_PIf);
         } else {
             this->submap_voxel_->add_point_cloud(*this->keyframe_pc_, current_pose);
-            this->submap_voxel_->downsampling(*this->submap_pc_tmp_, this->odom_.translation(),
+            this->submap_voxel_->downsampling(*this->submap_pc_tmp_, current_pose.translation(),
                                               this->params_.submap_max_distance_range);
         }
 
@@ -465,6 +472,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
         this->last_keyframe_time_ = timestamp;
         this->is_first_frame_ = false;
+        this->last_frame_time_ = timestamp;
+
         return;
     }
 
@@ -472,7 +481,27 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_registration = 0.0;
     const auto reg_result = time_utils::measure_execution(
         [&]() {
-            const Eigen::Isometry3f init_T = this->odom_;
+            // Predict initial pose by applying the previous motion model
+            Eigen::Isometry3f init_T = Eigen::Isometry3f::Identity();
+            if (this->params_.gicp_motion_prediction_factor > 0.0f &&
+                this->params_.gicp_motion_prediction_factor <= 1.0f) {
+                const auto delta_pose = this->prev_odom_.inverse() * this->odom_;
+                const Eigen::Vector3f delta_trans = delta_pose.translation();
+                const Eigen::AngleAxisf delta_angle_axis(delta_pose.rotation());
+
+                const Eigen::Vector3f predicted_trans =
+                    this->odom_.translation() +
+                    this->odom_.rotation() * (delta_trans * this->params_.gicp_motion_prediction_factor);
+                const Eigen::Quaternionf predicted_rot =
+                    Eigen::AngleAxisf(delta_angle_axis.angle() * this->params_.gicp_motion_prediction_factor,
+                                      delta_angle_axis.axis()) *
+                    Eigen::Quaternionf(this->odom_.rotation());
+
+                init_T.translation() = predicted_trans;
+                init_T.rotate(predicted_rot.normalized());
+            } else {
+                init_T = this->odom_;
+            }
 
             if (this->params_.scan_preprocess_random_sampling_enable) {
                 this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, *this->gicp_input_pc_,
@@ -483,8 +512,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             const auto result =
                 this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_, init_T.matrix());
 
-            // update odometry
-            this->odom_ = result.T;
             return result;
         },
         dt_registration);
@@ -507,7 +534,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
             // for octomap
             if (this->params_.occupancy_grid_map_enable) {
-                build_submap(this->preprocessed_pc_, this->odom_);
+                build_submap(this->preprocessed_pc_, reg_result.T);
                 return true;
             }
 
@@ -529,12 +556,18 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 this->last_keyframe_pose_ = reg_result.T;
                 this->last_keyframe_time_ = timestamp;
 
-                build_submap(this->preprocessed_pc_, this->odom_);
+                build_submap(this->preprocessed_pc_, reg_result.T);
                 return true;
             }
             return false;
         },
         dt_build_submap);
+
+    // update Odometry
+    {
+        this->prev_odom_ = this->odom_;
+        this->odom_ = reg_result.T;
+    }
 
     // publish ROS2 message
     double dt_to_ros2_msg = 0.0;
@@ -555,7 +588,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_publish = 0.0;
     time_utils::measure_execution(
         [&]() {
-            this->publish_odom(msg->header, this->odom_, reg_result);
+            this->publish_odom(msg->header, reg_result);
             if (preprocessed_msg != nullptr && this->pub_preprocessed_->get_subscription_count() > 0) {
                 this->pub_preprocessed_->publish(*preprocessed_msg);
             }
@@ -567,6 +600,8 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             }
         },
         dt_publish);
+
+    this->last_frame_time_ = timestamp;
 
     double total_time = 0.0;
     total_time += dt_from_ros2_msg;
@@ -600,26 +635,30 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     RCLCPP_INFO(this->get_logger(), "");
 }
 
-void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom,
+void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header,
                                      const algorithms::registration::RegistrationResult& reg_result) {
-    geometry_msgs::msg::TransformStamped tf;
-    tf.header.stamp = header.stamp;
-    tf.header.frame_id = this->params_.odom_frame_id;
-    tf.child_frame_id = this->params_.base_link_id;
+    const auto odom_trans = reg_result.T.translation();
+    const Eigen::Quaternionf odom_quat(reg_result.T.rotation());
+    {
+        geometry_msgs::msg::TransformStamped::SharedPtr tf;
+        tf.reset(new geometry_msgs::msg::TransformStamped);
+        tf->header.stamp = header.stamp;
+        tf->header.frame_id = this->params_.odom_frame_id;
+        tf->child_frame_id = this->params_.base_link_id;
 
-    const auto odom_trans = odom.translation();
-    tf.transform.translation.x = odom_trans.x();
-    tf.transform.translation.y = odom_trans.y();
-    tf.transform.translation.z = odom_trans.z();
-    const Eigen::Quaternionf odom_quat(odom.rotation());
-    tf.transform.rotation.x = odom_quat.x();
-    tf.transform.rotation.y = odom_quat.y();
-    tf.transform.rotation.z = odom_quat.z();
-    tf.transform.rotation.w = odom_quat.w();
-    this->tf_broadcaster_->sendTransform(tf);
+        tf->transform.translation.x = odom_trans.x();
+        tf->transform.translation.y = odom_trans.y();
+        tf->transform.translation.z = odom_trans.z();
+        tf->transform.rotation.x = odom_quat.x();
+        tf->transform.rotation.y = odom_quat.y();
+        tf->transform.rotation.z = odom_quat.z();
+        tf->transform.rotation.w = odom_quat.w();
+        this->tf_broadcaster_->sendTransform(*std::move(tf));
+    }
 
     geometry_msgs::msg::PoseStamped pose;
-    pose.header = tf.header;
+    pose.header.stamp = header.stamp;
+    pose.header.frame_id = this->params_.odom_frame_id;
     pose.pose.position.x = odom_trans.x();
     pose.pose.position.y = odom_trans.y();
     pose.pose.position.z = odom_trans.z();
@@ -630,8 +669,9 @@ void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header, const 
     this->pub_pose_->publish(pose);
 
     nav_msgs::msg::Odometry odom_msg;
-    odom_msg.header = tf.header;
-    odom_msg.child_frame_id = tf.child_frame_id;
+    odom_msg.header.stamp = header.stamp;
+    odom_msg.header.frame_id = this->params_.odom_frame_id;
+    odom_msg.child_frame_id = this->params_.base_link_id;
     odom_msg.pose.pose.position = pose.pose.position;
     odom_msg.pose.pose.orientation = pose.pose.orientation;
     // convert Hessian to Covariance

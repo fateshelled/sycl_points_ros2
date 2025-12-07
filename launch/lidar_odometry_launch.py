@@ -80,29 +80,33 @@ def generate_launch_description():
         TimerAction(
             period=1.0,
             actions=[
-                Node(
-                    package="tf2_ros",
-                    executable="static_transform_publisher",
-                    arguments=[
-                        "--x", LaunchConfiguration("T_base_link_to_lidar/x"),
-                        "--y", LaunchConfiguration("T_base_link_to_lidar/y"),
-                        "--z", LaunchConfiguration("T_base_link_to_lidar/z"),
-                        "--qx", LaunchConfiguration("T_base_link_to_lidar/qx"),
-                        "--qy", LaunchConfiguration("T_base_link_to_lidar/qy"),
-                        "--qz", LaunchConfiguration("T_base_link_to_lidar/qz"),
-                        "--qw", LaunchConfiguration("T_base_link_to_lidar/qw"),]
-                    + ["--frame-id", "base_link"]
-                    + ["--child-frame-id", LaunchConfiguration("lidar_frame_id")],
-                ),
                 ComposableNodeContainer(
                     name="sycl_points_container",
                     namespace="",
                     package="rclcpp_components",
-                    executable="component_container",  # SingleThreadedExecutor
-                    # executable="component_container_mt",  # MultiThreadedExecutor
+                    # executable="component_container",  # SingleThreadedExecutor
+                    executable="component_container_mt",  # MultiThreadedExecutor
                     output="screen",
                     emulate_tty=True,
                     composable_node_descriptions=[
+                        ComposableNode(
+                            package="tf2_ros",
+                            plugin="tf2_ros::StaticTransformBroadcasterNode",
+                            name="static_transform_broadcaster",
+                            parameters=[
+                                {
+                                    "translation.x": LaunchConfiguration("T_base_link_to_lidar/x"),
+                                    "translation.y": LaunchConfiguration("T_base_link_to_lidar/y"),
+                                    "translation.z": LaunchConfiguration("T_base_link_to_lidar/z"),
+                                    "rotation.x": LaunchConfiguration("T_base_link_to_lidar/qx"),
+                                    "rotation.y": LaunchConfiguration("T_base_link_to_lidar/qy"),
+                                    "rotation.z": LaunchConfiguration("T_base_link_to_lidar/qz"),
+                                    "rotation.w": LaunchConfiguration("T_base_link_to_lidar/qw"),
+                                    "frame_id": LaunchConfiguration("base_link_id"),
+                                    "child_frame_id": LaunchConfiguration("lidar_frame_id"),
+                                },
+                            ]
+                        ),
                         ComposableNode(
                             package=package_name,
                             plugin="sycl_points::ros2::LiDAROdometryNode",

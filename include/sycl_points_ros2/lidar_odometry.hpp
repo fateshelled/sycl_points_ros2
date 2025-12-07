@@ -1,19 +1,18 @@
 #pragma once
 
-#include <tf2_ros/transform_broadcaster.h>
-
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sycl_points/algorithms/knn/kdtree.hpp>
 #include <sycl_points/algorithms/mapping/occupancy_grid_map.hpp>
 #include <sycl_points/algorithms/mapping/voxel_hash_map.hpp>
-#include <sycl_points/algorithms/knn/kdtree.hpp>
 #include <sycl_points/algorithms/polar_downsampling.hpp>
 #include <sycl_points/algorithms/preprocess_filter.hpp>
 #include <sycl_points/algorithms/registration.hpp>
 #include <sycl_points/algorithms/voxel_downsampling.hpp>
 #include <sycl_points/utils/sycl_utils.hpp>
+#include <tf2_ros/transform_broadcaster.hpp>
 
 namespace sycl_points {
 namespace ros2 {
@@ -62,6 +61,7 @@ public:
         bool occupancy_grid_map_enable_pruning = true;
         uint32_t occupancy_grid_map_stale_frame_threshold = 100U;
 
+        float gicp_motion_prediction_factor = 0.5f;
         size_t gicp_min_num_points = 100;
         algorithms::registration::RegistrationParams gicp;
 
@@ -104,9 +104,13 @@ private:
     algorithms::filter::PolarGrid::Ptr polar_filter_ = nullptr;
     algorithms::registration::RegistrationGICP::Ptr gicp_ = nullptr;
 
+    Eigen::Isometry3f prev_odom_;
     Eigen::Isometry3f odom_;
     Eigen::Isometry3f last_keyframe_pose_;
     double last_keyframe_time_;
+
+    double last_frame_time_;
+    float dt_ = -1.0f;
 
     Parameters params_;
 
@@ -121,7 +125,7 @@ private:
 
     Parameters get_parameters();
     void point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
-    void publish_odom(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom,
+    void publish_odom(const std_msgs::msg::Header& header,
                       const algorithms::registration::RegistrationResult& reg_result);
     void publish_keyframe_pose(const std_msgs::msg::Header& header, const Eigen::Isometry3f& odom);
 };

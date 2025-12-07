@@ -30,7 +30,7 @@ lidar_odometry_node:
     submap/covariance/neighbor_num: 30
     submap/color_gradient/neighbor_num: 30
     submap/voxel_size: 1.0
-    submap/max_distance_range: 30.0
+    submap/max_distance_range: 50.0
     submap/point_random_sampling_num: 2000
     keyframe/inlier_ratio_threshold: 0.7
     keyframe/distance_threshold: 2.0
@@ -45,6 +45,7 @@ lidar_odometry_node:
     occupancy_grid_map/enable_pruning: true
     occupancy_grid_map/stale_frame_threshold: 200
 
+    gicp/motion_prediction/factor: 0.2
     gicp/min_num_points: 300
     gicp/max_iterations: 4
     gicp/lambda: 1.0e-4
@@ -54,7 +55,7 @@ lidar_odometry_node:
     gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
     gicp/robust/auto_scale: true
     gicp/robust/init_scale: 10.0
-    gicp/robust/scaling_factor: 0.5
+    gicp/robust/min_scale: 0.625
     gicp/robust/scaling_iter: 4
     gicp/photometric/enable: false
     gicp/photometric/photometric_weight: 0.2

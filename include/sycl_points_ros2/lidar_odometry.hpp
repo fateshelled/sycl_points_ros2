@@ -27,13 +27,15 @@ public:
 
         std::string sycl_device_vendor = "intel";
         std::string sycl_device_type = "gpu";
-        bool scan_downsampling_voxel_enable = true;
+        bool scan_downsampling_voxel_enable = false;
         float scan_downsampling_voxel_size = 1.0f;
-        bool scan_downsampling_polar_enable = false;
+        bool scan_downsampling_polar_enable = true;
         float scan_downsampling_polar_distance_size = 1.0f;
         float scan_downsampling_polar_elevation_size = 3.0f * M_PIf / 180.0f;
         float scan_downsampling_polar_azimuth_size = 3.0f * M_PIf / 180.0f;
         std::string scan_downsampling_polar_coord_system = "CAMERA";
+        bool scan_downsampling_random_enable = true;
+        size_t scan_downsampling_random_num = 5000;
 
         int32_t scan_covariance_neighbor_num = 10;
         bool scan_preprocess_box_filter_enable = true;

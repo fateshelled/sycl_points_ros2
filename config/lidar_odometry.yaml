@@ -17,19 +17,19 @@ lidar_odometry_node:
     scan/preprocess/box_filter/enable: true
     scan/preprocess/box_filter/max: 50.0
     scan/preprocess/box_filter/min: 2.0
-    scan/preprocess/random_sampling/enable: true
-    scan/preprocess/random_sampling/num: 1000
     scan/downsampling/voxel/enable: false
-    scan/downsampling/voxel/voxel_size: 0.5
+    scan/downsampling/voxel/voxel_size: 0.3
     scan/downsampling/polar/enable: true
     scan/downsampling/polar/distance_size: 0.5  # meters
     scan/downsampling/polar/elevation_size: 0.05235987755982989 # 3 degrees
     scan/downsampling/polar/azimuth_size: 0.05235987755982989   # 3 degrees
     scan/downsampling/polar/coord_system: CAMERA # CAMERA or LIDAR
+    scan/downsampling/random/enable: true
+    scan/downsampling/random/num: 5000
 
     submap/covariance/neighbor_num: 30
     submap/color_gradient/neighbor_num: 30
-    submap/voxel_size: 1.0
+    submap/voxel_size: 0.5
     submap/max_distance_range: 50.0
     submap/point_random_sampling_num: 2000
     keyframe/inlier_ratio_threshold: 0.7

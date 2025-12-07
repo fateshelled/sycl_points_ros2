@@ -174,6 +174,10 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             "scan/downsampling/polar/azimuth_size", params.scan_downsampling_polar_azimuth_size);
         params.scan_downsampling_polar_coord_system = this->declare_parameter<std::string>(
             "scan/downsampling/polar/coord_system", params.scan_downsampling_polar_coord_system);
+        params.scan_downsampling_random_enable =
+            this->declare_parameter<bool>("scan/downsampling/random/enable", params.scan_downsampling_random_enable);
+        params.scan_downsampling_random_num =
+            this->declare_parameter<int>("scan/downsampling/random/num", params.scan_downsampling_random_num);
 
         params.scan_covariance_neighbor_num =
             this->declare_parameter<int>("scan/covariance/neighbor_num", params.scan_covariance_neighbor_num);
@@ -374,6 +378,11 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 } else {
                     *this->preprocessed_pc_ = *this->scan_pc_;  // copy
                 }
+            }
+
+            if (this->params_.scan_downsampling_random_enable) {
+                preprocess_filter_->random_sampling(*this->preprocessed_pc_, *this->preprocessed_pc_,
+                                                    this->params_.scan_downsampling_random_num);
             }
         },
         dt_preprocessing);

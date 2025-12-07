@@ -63,6 +63,8 @@ public:
 
         float gicp_motion_prediction_factor = 0.5f;
         size_t gicp_min_num_points = 100;
+        bool gicp_velocity_update_enable = true;
+        size_t gicp_velocity_update_iter = 1;
         bool gicp_random_sampling_enable = true;
         int32_t gicp_random_sampling_num = 1000;
         algorithms::registration::RegistrationParams gicp;

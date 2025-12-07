@@ -3,6 +3,7 @@
 #include <rclcpp_components/register_node_macro.hpp>
 #include <sycl_points/algorithms/color_gradient.hpp>
 #include <sycl_points/algorithms/covariance.hpp>
+#include <sycl_points/algorithms/deskew/relative_pose_deskew.hpp>
 #include <sycl_points/ros2/convert.hpp>
 #include <sycl_points/utils/time_utils.hpp>
 
@@ -267,7 +268,13 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             params.gicp.robust.scaling_iter =
                 this->declare_parameter<int>("gicp/robust/scaling_iter", params.gicp.robust.scaling_iter);
         }
-
+        // deskew
+        {
+            params.gicp_velocity_update_enable =
+                this->declare_parameter<bool>("gicp/velocity_update/enable", params.gicp_velocity_update_enable);
+            params.gicp_velocity_update_iter =
+                this->declare_parameter<int>("gicp/velocity_update/iter", params.gicp_velocity_update_iter);
+        }
         // photometric
         {
             params.gicp.photometric.enable =
@@ -518,8 +525,16 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             } else {
                 *this->gicp_input_pc_ = *this->preprocessed_pc_;
             }
-            const auto result =
-                this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_, init_T.matrix());
+            algorithms::registration::RegistrationResult result;
+
+            if (this->params_.gicp_velocity_update_enable) {
+                result = this->gicp_->align_velocity_update(
+                    *this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_, init_T.matrix(), this->dt_,
+                    this->params_.gicp_velocity_update_iter, this->odom_.matrix());
+            } else {
+                result = this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_,
+                                            init_T.matrix());
+            }
 
             return result;
         },
@@ -529,6 +544,11 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_build_submap = 0.0;
     const bool update_submap = time_utils::measure_execution(
         [&]() {
+            if (this->params_.gicp_velocity_update_enable) {
+                algorithms::deskew::deskew_point_cloud_constant_velocity(
+                    *this->preprocessed_pc_, *this->preprocessed_pc_, this->odom_, reg_result.T, this->dt_);
+            }
+
             // Conditions for adding keyframes
             //   inlier_ratio > keyframe_inlier_ratio_threshold
             //   &&

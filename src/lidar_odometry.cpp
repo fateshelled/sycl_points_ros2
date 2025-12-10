@@ -31,7 +31,7 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
         this->msg_data_buffer_.reset(new shared_vector<uint8_t>(*this->queue_ptr_->ptr));
         this->scan_pc_.reset(new PointCloudShared(*this->queue_ptr_));
         this->preprocessed_pc_.reset(new PointCloudShared(*this->queue_ptr_));
-        this->gicp_input_pc_.reset(new PointCloudShared(*this->queue_ptr_));
+        this->registration_input_pc_.reset(new PointCloudShared(*this->queue_ptr_));
         this->keyframe_pc_.reset(new PointCloudShared(*this->queue_ptr_));
         this->submap_pc_tmp_.reset(new PointCloudShared(*this->queue_ptr_));
     }
@@ -85,8 +85,8 @@ LiDAROdometryNode::LiDAROdometryNode(const rclcpp::NodeOptions& options) : rclcp
     }
     // Registration
     {
-        this->gicp_ =
-            std::make_shared<algorithms::registration::RegistrationGICP>(*this->queue_ptr_, this->params_.gicp);
+        this->registration_ =
+            std::make_shared<algorithms::registration::Registration>(*this->queue_ptr_, this->params_.reg_params);
     }
 
     // Subscription
@@ -190,7 +190,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             this->declare_parameter<double>("scan/preprocess/box_filter/max", params.scan_preprocess_box_filter_max);
     }
 
-    // submap and keyframe
+    // submapping
     {
         params.submap_voxel_size = this->declare_parameter<double>("submap/voxel_size", params.submap_voxel_size);
         params.submap_covariance_neighbor_num =
@@ -202,115 +202,126 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
         params.submap_point_random_sampling_num =
             this->declare_parameter<int>("submap/point_random_sampling_num", params.submap_point_random_sampling_num);
 
-        params.keyframe_inlier_ratio_threshold =
-            this->declare_parameter<double>("keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
+        params.keyframe_inlier_ratio_threshold = this->declare_parameter<double>(
+            "submap/keyframe/inlier_ratio_threshold", params.keyframe_inlier_ratio_threshold);
         params.keyframe_distance_threshold =
-            this->declare_parameter<double>("keyframe/distance_threshold", params.keyframe_distance_threshold);
+            this->declare_parameter<double>("submap/keyframe/distance_threshold", params.keyframe_distance_threshold);
         params.keyframe_angle_threshold_degrees = this->declare_parameter<double>(
-            "keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
-        params.keyframe_time_threshold_seconds =
-            this->declare_parameter<double>("keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
+            "submap/keyframe/angle_threshold_degrees", params.keyframe_angle_threshold_degrees);
+        params.keyframe_time_threshold_seconds = this->declare_parameter<double>(
+            "submap/keyframe/time_threshold_seconds", params.keyframe_time_threshold_seconds);
 
         params.occupancy_grid_map_enable =
-            this->declare_parameter<bool>("occupancy_grid_map/enable", params.occupancy_grid_map_enable);
-        params.occupancy_grid_map_log_odds_hit =
-            this->declare_parameter<double>("occupancy_grid_map/log_odds_hit", params.occupancy_grid_map_log_odds_hit);
+            this->declare_parameter<bool>("submap/occupancy_grid_map/enable", params.occupancy_grid_map_enable);
+        params.occupancy_grid_map_log_odds_hit = this->declare_parameter<double>(
+            "submap/occupancy_grid_map/log_odds_hit", params.occupancy_grid_map_log_odds_hit);
         params.occupancy_grid_map_log_odds_miss = this->declare_parameter<double>(
-            "occupancy_grid_map/log_odds_miss", params.occupancy_grid_map_log_odds_miss);
+            "submap/occupancy_grid_map/log_odds_miss", params.occupancy_grid_map_log_odds_miss);
         params.occupancy_grid_map_log_odds_limits_min = this->declare_parameter<double>(
-            "occupancy_grid_map/log_odds_limits/min", params.occupancy_grid_map_log_odds_limits_min);
+            "submap/occupancy_grid_map/log_odds_limits/min", params.occupancy_grid_map_log_odds_limits_min);
         params.occupancy_grid_map_log_odds_limits_max = this->declare_parameter<double>(
-            "occupancy_grid_map/log_odds_limits/max", params.occupancy_grid_map_log_odds_limits_max);
+            "submap/occupancy_grid_map/log_odds_limits/max", params.occupancy_grid_map_log_odds_limits_max);
         params.occupancy_grid_map_occupied_threshold = this->declare_parameter<double>(
-            "occupancy_grid_map/occupied_threshold", params.occupancy_grid_map_occupied_threshold);
+            "submap/occupancy_grid_map/occupied_threshold", params.occupancy_grid_map_occupied_threshold);
         params.occupancy_grid_map_enable_pruning = this->declare_parameter<bool>(
-            "occupancy_grid_map/enable_pruning", params.occupancy_grid_map_enable_pruning);
+            "submap/occupancy_grid_map/enable_pruning", params.occupancy_grid_map_enable_pruning);
         params.occupancy_grid_map_stale_frame_threshold = this->declare_parameter<int>(
-            "occupancy_grid_map/stale_frame_threshold", params.occupancy_grid_map_stale_frame_threshold);
+            "submap/occupancy_grid_map/stale_frame_threshold", params.occupancy_grid_map_stale_frame_threshold);
     }
 
     // Registration
     {
         // common
         {
-            params.gicp_motion_prediction_factor =
-                this->declare_parameter<double>("gicp/motion_prediction_factor", params.gicp_motion_prediction_factor);
-            params.gicp_min_num_points =
-                this->declare_parameter<int>("gicp/min_num_points", params.gicp_min_num_points);
-            params.gicp_random_sampling_enable =
-                this->declare_parameter<bool>("gicp/random_sampling/enable", params.gicp_random_sampling_enable);
-            params.gicp_random_sampling_num =
-                this->declare_parameter<int>("gicp/random_sampling/num", params.gicp_random_sampling_num);
+            params.registration_motion_prediction_factor = this->declare_parameter<double>(
+                "registration/motion_prediction_factor", params.registration_motion_prediction_factor);
+            params.registration_min_num_points =
+                this->declare_parameter<int>("registration/min_num_points", params.registration_min_num_points);
+            params.registration_random_sampling_enable = this->declare_parameter<bool>(
+                "registration/random_sampling/enable", params.registration_random_sampling_enable);
+            params.registration_random_sampling_num = this->declare_parameter<int>(
+                "registration/random_sampling/num", params.registration_random_sampling_num);
 
-            params.gicp.max_iterations =
-                this->declare_parameter<int>("gicp/max_iterations", params.gicp.max_iterations);
-            params.gicp.lambda = this->declare_parameter<double>("gicp/lambda", params.gicp.lambda);
-            params.gicp.max_correspondence_distance = this->declare_parameter<double>(
-                "gicp/max_correspondence_distance", params.gicp.max_correspondence_distance);
-            params.gicp.crireria.translation =
-                this->declare_parameter<double>("gicp/criteria/translation", params.gicp.crireria.translation);
-            params.gicp.crireria.rotation =
-                this->declare_parameter<double>("gicp/criteria/rotation", params.gicp.crireria.rotation);
+            const std::string reg_type = this->declare_parameter<std::string>("registration/type", "gicp");
+            params.reg_params.reg_type = algorithms::registration::RegType_from_string(reg_type);
+            params.reg_params.max_iterations =
+                this->declare_parameter<int>("registration/max_iterations", params.reg_params.max_iterations);
+            params.reg_params.lambda = this->declare_parameter<double>("registration/lambda", params.reg_params.lambda);
+            params.reg_params.max_correspondence_distance = this->declare_parameter<double>(
+                "registration/max_correspondence_distance", params.reg_params.max_correspondence_distance);
+            params.reg_params.crireria.translation = this->declare_parameter<double>(
+                "registration/criteria/translation", params.reg_params.crireria.translation);
+            params.reg_params.crireria.rotation =
+                this->declare_parameter<double>("registration/criteria/rotation", params.reg_params.crireria.rotation);
 
-            params.gicp.verbose = this->declare_parameter<bool>("gicp/verbose", params.gicp.verbose);
+            params.reg_params.verbose =
+                this->declare_parameter<bool>("registration/verbose", params.reg_params.verbose);
         }
 
         // robust
         {
-            const std::string robust_loss = this->declare_parameter<std::string>("gicp/robust/type", "NONE");
-            params.gicp.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
-            params.gicp.robust.auto_scale =
-                this->declare_parameter<bool>("gicp/robust/auto_scale", params.gicp.robust.auto_scale);
-            params.gicp.robust.init_scale =
-                this->declare_parameter<double>("gicp/robust/init_scale", params.gicp.robust.init_scale);
-            params.gicp.robust.min_scale =
-                this->declare_parameter<double>("gicp/robust/min_scale", params.gicp.robust.min_scale);
-            params.gicp.robust.scaling_iter =
-                this->declare_parameter<int>("gicp/robust/scaling_iter", params.gicp.robust.scaling_iter);
+            const std::string robust_loss = this->declare_parameter<std::string>("registration/robust/type", "NONE");
+            params.reg_params.robust.type = algorithms::registration::RobustLossType_from_string(robust_loss);
+            params.reg_params.robust.auto_scale =
+                this->declare_parameter<bool>("registration/robust/auto_scale", params.reg_params.robust.auto_scale);
+            params.reg_params.robust.init_scale =
+                this->declare_parameter<double>("registration/robust/init_scale", params.reg_params.robust.init_scale);
+            params.reg_params.robust.min_scale =
+                this->declare_parameter<double>("registration/robust/min_scale", params.reg_params.robust.min_scale);
+            params.reg_params.robust.scaling_iter =
+                this->declare_parameter<int>("registration/robust/scaling_iter", params.reg_params.robust.scaling_iter);
         }
         // deskew
         {
-            params.gicp_velocity_update_enable =
-                this->declare_parameter<bool>("gicp/velocity_update/enable", params.gicp_velocity_update_enable);
-            params.gicp_velocity_update_iter =
-                this->declare_parameter<int>("gicp/velocity_update/iter", params.gicp_velocity_update_iter);
+            params.registration_velocity_update_enable = this->declare_parameter<bool>(
+                "registration/velocity_update/enable", params.registration_velocity_update_enable);
+            params.registration_velocity_update_iter = this->declare_parameter<int>(
+                "registration/velocity_update/iter", params.registration_velocity_update_iter);
         }
         // photometric
         {
-            params.gicp.photometric.enable =
-                this->declare_parameter<bool>("gicp/photometric/enable", params.gicp.photometric.enable);
-            params.gicp.photometric.photometric_weight =
-                this->declare_parameter<double>("gicp/photometric/weight", params.gicp.photometric.photometric_weight);
+            params.reg_params.photometric.enable =
+                this->declare_parameter<bool>("registration/photometric/enable", params.reg_params.photometric.enable);
+            params.reg_params.photometric.photometric_weight = this->declare_parameter<double>(
+                "registration/photometric/weight", params.reg_params.photometric.photometric_weight);
+        }
+        // GenZ
+        {
+            params.reg_params.genz.planarity_threshold = this->declare_parameter<double>(
+                "registration/genz/planarity_threshold", params.reg_params.genz.planarity_threshold);
         }
 
         // optimization
         {
             const std::string optimization_method =
-                this->declare_parameter<std::string>("gicp/optimization_method", "GN");
-            params.gicp.optimization_method =
+                this->declare_parameter<std::string>("registration/optimization_method", "GN");
+            params.reg_params.optimization_method =
                 algorithms::registration::OptimizationMethod_from_string(optimization_method);
 
-            params.gicp.lm.max_inner_iterations =
-                this->declare_parameter<int>("gicp/lm/max_inner_iterations", params.gicp.lm.max_inner_iterations);
-            params.gicp.lm.lambda_factor =
-                this->declare_parameter<double>("gicp/lm/lambda_factor", params.gicp.lm.lambda_factor);
-            params.gicp.lm.max_lambda =
-                this->declare_parameter<double>("gicp/lm/max_lambda", params.gicp.lm.max_lambda);
-            params.gicp.lm.min_lambda =
-                this->declare_parameter<double>("gicp/lm/min_lambda", params.gicp.lm.min_lambda);
+            params.reg_params.lm.max_inner_iterations = this->declare_parameter<int>(
+                "registration/lm/max_inner_iterations", params.reg_params.lm.max_inner_iterations);
+            params.reg_params.lm.lambda_factor =
+                this->declare_parameter<double>("registration/lm/lambda_factor", params.reg_params.lm.lambda_factor);
+            params.reg_params.lm.max_lambda =
+                this->declare_parameter<double>("registration/lm/max_lambda", params.reg_params.lm.max_lambda);
+            params.reg_params.lm.min_lambda =
+                this->declare_parameter<double>("registration/lm/min_lambda", params.reg_params.lm.min_lambda);
 
-            params.gicp.dogleg.initial_trust_region_radius = this->declare_parameter<double>(
-                "gicp/dogleg/initial_trust_region_radius", params.gicp.dogleg.initial_trust_region_radius);
-            params.gicp.dogleg.max_trust_region_radius = this->declare_parameter<double>(
-                "gicp/dogleg/max_trust_region_radius", params.gicp.dogleg.max_trust_region_radius);
-            params.gicp.dogleg.min_trust_region_radius = this->declare_parameter<double>(
-                "gicp/dogleg/min_trust_region_radius", params.gicp.dogleg.min_trust_region_radius);
-            params.gicp.dogleg.eta1 = this->declare_parameter<double>("gicp/dogleg/eta1", params.gicp.dogleg.eta1);
-            params.gicp.dogleg.eta2 = this->declare_parameter<double>("gicp/dogleg/eta2", params.gicp.dogleg.eta2);
-            params.gicp.dogleg.gamma_decrease =
-                this->declare_parameter<double>("gicp/dogleg/gamma_decrease", params.gicp.dogleg.gamma_decrease);
-            params.gicp.dogleg.gamma_increase =
-                this->declare_parameter<double>("gicp/dogleg/gamma_increase", params.gicp.dogleg.gamma_increase);
+            params.reg_params.dogleg.initial_trust_region_radius =
+                this->declare_parameter<double>("registration/dogleg/initial_trust_region_radius",
+                                                params.reg_params.dogleg.initial_trust_region_radius);
+            params.reg_params.dogleg.max_trust_region_radius = this->declare_parameter<double>(
+                "registration/dogleg/max_trust_region_radius", params.reg_params.dogleg.max_trust_region_radius);
+            params.reg_params.dogleg.min_trust_region_radius = this->declare_parameter<double>(
+                "registration/dogleg/min_trust_region_radius", params.reg_params.dogleg.min_trust_region_radius);
+            params.reg_params.dogleg.eta1 =
+                this->declare_parameter<double>("registration/dogleg/eta1", params.reg_params.dogleg.eta1);
+            params.reg_params.dogleg.eta2 =
+                this->declare_parameter<double>("registration/dogleg/eta2", params.reg_params.dogleg.eta2);
+            params.reg_params.dogleg.gamma_decrease = this->declare_parameter<double>(
+                "registration/dogleg/gamma_decrease", params.reg_params.dogleg.gamma_decrease);
+            params.reg_params.dogleg.gamma_increase = this->declare_parameter<double>(
+                "registration/dogleg/gamma_increase", params.reg_params.dogleg.gamma_increase);
         }
     }
 
@@ -394,7 +405,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         },
         dt_preprocessing);
 
-    if (this->preprocessed_pc_->size() <= this->params_.gicp_min_num_points) {
+    if (this->preprocessed_pc_->size() <= this->params_.registration_min_num_points) {
         RCLCPP_WARN(this->get_logger(), "point cloud size is too small");
         return;
     }
@@ -442,7 +453,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         }
 
         // copy
-        if (this->submap_pc_tmp_->size() >= this->params_.gicp_min_num_points) {
+        if (this->submap_pc_tmp_->size() >= this->params_.registration_min_num_points) {
             this->submap_pc_ptr_ = this->submap_pc_tmp_;
         } else if (this->is_first_frame_) {
             this->submap_pc_ptr_ = pc;
@@ -454,7 +465,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             *this->submap_pc_ptr_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
 
         sycl_utils::events grad_events;
-        if (this->submap_pc_ptr_->has_rgb() && this->params_.gicp.photometric.enable) {
+        if (this->submap_pc_ptr_->has_rgb() && this->params_.reg_params.photometric.enable) {
             if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
                 grad_events += this->submap_tree_->knn_search_async(
                     *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
@@ -464,7 +475,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 grad_events += algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_ptr_,
                                                                                          this->knn_result_, events.evs);
             }
-        } else if (this->submap_pc_ptr_->has_intensity() && this->params_.gicp.photometric.enable) {
+        } else if (this->submap_pc_ptr_->has_intensity() && this->params_.reg_params.photometric.enable) {
             if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
                 grad_events += this->submap_tree_->knn_search_async(
                     *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
@@ -499,17 +510,17 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         [&]() {
             // Predict initial pose by applying the previous motion model
             Eigen::Isometry3f init_T = Eigen::Isometry3f::Identity();
-            if (this->params_.gicp_motion_prediction_factor > 0.0f &&
-                this->params_.gicp_motion_prediction_factor <= 1.0f) {
+            if (this->params_.registration_motion_prediction_factor > 0.0f &&
+                this->params_.registration_motion_prediction_factor <= 1.0f) {
                 const auto delta_pose = this->prev_odom_.inverse() * this->odom_;
                 const Eigen::Vector3f delta_trans = delta_pose.translation();
                 const Eigen::AngleAxisf delta_angle_axis(delta_pose.rotation());
 
                 const Eigen::Vector3f predicted_trans =
                     this->odom_.translation() +
-                    this->odom_.rotation() * (delta_trans * this->params_.gicp_motion_prediction_factor);
+                    this->odom_.rotation() * (delta_trans * this->params_.registration_motion_prediction_factor);
                 const Eigen::Quaternionf predicted_rot =
-                    Eigen::AngleAxisf(delta_angle_axis.angle() * this->params_.gicp_motion_prediction_factor,
+                    Eigen::AngleAxisf(delta_angle_axis.angle() * this->params_.registration_motion_prediction_factor,
                                       delta_angle_axis.axis()) *
                     Eigen::Quaternionf(this->odom_.rotation());
 
@@ -519,21 +530,21 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 init_T = this->odom_;
             }
 
-            if (this->params_.gicp_random_sampling_enable) {
-                this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, *this->gicp_input_pc_,
-                                                          this->params_.gicp_random_sampling_num);
+            if (this->params_.registration_random_sampling_enable) {
+                this->preprocess_filter_->random_sampling(*this->preprocessed_pc_, *this->registration_input_pc_,
+                                                          this->params_.registration_random_sampling_num);
             } else {
-                *this->gicp_input_pc_ = *this->preprocessed_pc_;
+                *this->registration_input_pc_ = *this->preprocessed_pc_;
             }
             algorithms::registration::RegistrationResult result;
 
-            if (this->params_.gicp_velocity_update_enable) {
-                result = this->gicp_->align_velocity_update(
-                    *this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_, init_T.matrix(), this->dt_,
-                    this->params_.gicp_velocity_update_iter, this->odom_.matrix());
+            if (this->params_.registration_velocity_update_enable) {
+                result = this->registration_->align_velocity_update(
+                    *this->registration_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_, init_T.matrix(),
+                    this->dt_, this->params_.registration_velocity_update_iter, this->odom_.matrix());
             } else {
-                result = this->gicp_->align(*this->gicp_input_pc_, *this->submap_pc_ptr_, *this->submap_tree_,
-                                            init_T.matrix());
+                result = this->registration_->align(*this->registration_input_pc_, *this->submap_pc_ptr_,
+                                                    *this->submap_tree_, init_T.matrix());
             }
 
             return result;
@@ -544,7 +555,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double dt_build_submap = 0.0;
     const bool update_submap = time_utils::measure_execution(
         [&]() {
-            if (this->params_.gicp_velocity_update_enable) {
+            if (this->params_.registration_velocity_update_enable) {
                 algorithms::deskew::deskew_point_cloud_constant_velocity(
                     *this->preprocessed_pc_, *this->preprocessed_pc_, this->odom_, reg_result.T, this->dt_);
             }
@@ -556,7 +567,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             //     angle >= this->params_.keyframe_angle_threshold_degrees ||
             //     delta_t >= this->params_.keyframe_time_threshold_seconds )
 
-            const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->gicp_input_pc_->size();
+            const float inlier_ratio = static_cast<float>(reg_result.inlier) / this->registration_input_pc_->size();
             if (inlier_ratio <= this->params_.keyframe_inlier_ratio_threshold) {
                 return false;
             }
@@ -706,14 +717,14 @@ void LiDAROdometryNode::publish_odom(const std_msgs::msg::Header& header,
     // convert Hessian to Covariance
     {
         // rotation first
-        const Eigen::Matrix<float, 6, 6> cov_gicp = reg_result.H.inverse();
+        const Eigen::Matrix<float, 6, 6> cov_reg = reg_result.H.inverse();
 
         // ROS covariance is translation first
         Eigen::Matrix<float, 6, 6> cov_odom;
-        cov_odom.block<3, 3>(0, 0) = cov_gicp.block<3, 3>(3, 3);
-        cov_odom.block<3, 3>(3, 3) = cov_gicp.block<3, 3>(0, 0);
-        cov_odom.block<3, 3>(0, 3) = cov_gicp.block<3, 3>(3, 0);
-        cov_odom.block<3, 3>(3, 0) = cov_gicp.block<3, 3>(0, 3);
+        cov_odom.block<3, 3>(0, 0) = cov_reg.block<3, 3>(3, 3);
+        cov_odom.block<3, 3>(3, 3) = cov_reg.block<3, 3>(0, 0);
+        cov_odom.block<3, 3>(0, 3) = cov_reg.block<3, 3>(3, 0);
+        cov_odom.block<3, 3>(3, 0) = cov_reg.block<3, 3>(0, 3);
 
         Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>>(odom_msg.pose.covariance.data()) =
             cov_odom.cast<double>();

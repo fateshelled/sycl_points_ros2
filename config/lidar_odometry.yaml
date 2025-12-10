@@ -24,55 +24,57 @@ lidar_odometry_node:
     scan/downsampling/polar/elevation_size: 0.05235987755982989 # 3 degrees
     scan/downsampling/polar/azimuth_size: 0.05235987755982989   # 3 degrees
     scan/downsampling/polar/coord_system: CAMERA # CAMERA or LIDAR
-    scan/downsampling/random/enable: true
+    scan/downsampling/random/enable: false
     scan/downsampling/random/num: 5000
 
     submap/covariance/neighbor_num: 30
     submap/color_gradient/neighbor_num: 30
     submap/voxel_size: 0.5
     submap/max_distance_range: 50.0
-    submap/point_random_sampling_num: 2000
-    keyframe/inlier_ratio_threshold: 0.7
-    keyframe/distance_threshold: 2.0
-    keyframe/angle_threshold_degrees: 20.0
-    keyframe/time_threshold_seconds: 1.0
-    occupancy_grid_map/enable: true
-    occupancy_grid_map/log_odds_hit: 0.5
-    occupancy_grid_map/log_odds_miss: -0.01
-    occupancy_grid_map/log_odds_limits/min: -4.0
-    occupancy_grid_map/log_odds_limits/max: 4.0
-    occupancy_grid_map/occupied_threshold: 0.8
-    occupancy_grid_map/enable_pruning: true
-    occupancy_grid_map/stale_frame_threshold: 200
+    submap/point_random_sampling_num: 1000
+    submap/keyframe/inlier_ratio_threshold: 0.7
+    submap/keyframe/distance_threshold: 2.0
+    submap/keyframe/angle_threshold_degrees: 20.0
+    submap/keyframe/time_threshold_seconds: 1.0
+    submap/occupancy_grid_map/enable: true
+    submap/occupancy_grid_map/log_odds_hit: 0.5
+    submap/occupancy_grid_map/log_odds_miss: -0.01
+    submap/occupancy_grid_map/log_odds_limits/min: -4.0
+    submap/occupancy_grid_map/log_odds_limits/max: 4.0
+    submap/occupancy_grid_map/occupied_threshold: 0.8
+    submap/occupancy_grid_map/enable_pruning: true
+    submap/occupancy_grid_map/stale_frame_threshold: 200
 
-    gicp/motion_prediction/factor: 0.2
-    gicp/min_num_points: 300
-    gicp/velocity_update/enable: true
-    gicp/velocity_update/iter: 1
-    gicp/random_sampling/enable: true
-    gicp/random_sampling/num: 1000
-    gicp/max_iterations: 4
-    gicp/lambda: 1.0e-4
-    gicp/max_correspondence_distance: 2.0
-    gicp/criteria/translation: 1.0e-3
-    gicp/criteria/rotation: 1.0e-6
-    gicp/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
-    gicp/robust/auto_scale: true
-    gicp/robust/init_scale: 10.0
-    gicp/robust/min_scale: 1.25
-    gicp/robust/scaling_iter: 4
-    gicp/photometric/enable: false
-    gicp/photometric/photometric_weight: 0.2
-    gicp/optimization_method: DOGLEG  # GN, LM, DOGLEG
-    gicp/lm/max_inner_iterations: 10
-    gicp/lm/lambda_factor: 10.0
-    gicp/lm/max_lambda: 1.0e+6
-    gicp/lm/min_lambda: 1.0e-6
-    gicp/dogleg/initial_trust_region_radius: 1.0
-    gicp/dogleg/max_trust_region_radius: 5.0
-    gicp/dogleg/min_trust_region_radius: 1.0e-3
-    gicp/dogleg/eta1: 0.25
-    gicp/dogleg/eta2: 0.75
-    gicp/dogleg/gamma_decrease: 0.25
-    gicp/dogleg/gamma_increase: 2.0
-    gicp/verbose: false
+    registration/type: gicp # point_to_point, point_to_plane, gicp, genz
+    registration/motion_prediction/factor: 0.2
+    registration/min_num_points: 300
+    registration/velocity_update/enable: true
+    registration/velocity_update/iter: 1
+    registration/random_sampling/enable: true
+    registration/random_sampling/num: 1000
+    registration/max_iterations: 4
+    registration/lambda: 1.0e-4
+    registration/max_correspondence_distance: 2.0
+    registration/criteria/translation: 1.0e-3
+    registration/criteria/rotation: 1.0e-6
+    registration/robust/type: GEMAN_MCCLURE  # NONE, HUBER, TUKEY, CAUCHY, GEMAN_MCCLURE
+    registration/robust/auto_scale: true
+    registration/robust/init_scale: 10.0
+    registration/robust/min_scale: 1.25
+    registration/robust/scaling_iter: 4
+    registration/photometric/enable: false
+    registration/photometric/photometric_weight: 0.2
+    registration/genz/planarity_threshold: 0.2
+    registration/optimization_method: DOGLEG  # GN, LM, DOGLEG
+    registration/lm/max_inner_iterations: 10
+    registration/lm/lambda_factor: 10.0
+    registration/lm/max_lambda: 1.0e+6
+    registration/lm/min_lambda: 1.0e-6
+    registration/dogleg/initial_trust_region_radius: 1.0
+    registration/dogleg/max_trust_region_radius: 5.0
+    registration/dogleg/min_trust_region_radius: 1.0e-3
+    registration/dogleg/eta1: 0.25
+    registration/dogleg/eta2: 0.75
+    registration/dogleg/gamma_decrease: 0.25
+    registration/dogleg/gamma_increase: 2.0
+    registration/verbose: false

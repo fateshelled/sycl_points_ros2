@@ -61,13 +61,13 @@ public:
         bool occupancy_grid_map_enable_pruning = true;
         uint32_t occupancy_grid_map_stale_frame_threshold = 100U;
 
-        float gicp_motion_prediction_factor = 0.5f;
-        size_t gicp_min_num_points = 100;
-        bool gicp_velocity_update_enable = true;
-        size_t gicp_velocity_update_iter = 1;
-        bool gicp_random_sampling_enable = true;
-        int32_t gicp_random_sampling_num = 1000;
-        algorithms::registration::RegistrationParams gicp;
+        float registration_motion_prediction_factor = 0.5f;
+        size_t registration_min_num_points = 100;
+        bool registration_velocity_update_enable = true;
+        size_t registration_velocity_update_iter = 1;
+        bool registration_random_sampling_enable = true;
+        int32_t registration_random_sampling_num = 1000;
+        algorithms::registration::RegistrationParams reg_params;
 
         std::string odom_frame_id = "odom";
         std::string base_link_id = "base_link";
@@ -92,7 +92,7 @@ private:
     sycl_points::shared_vector_ptr<uint8_t> msg_data_buffer_ = nullptr;
     PointCloudShared::Ptr scan_pc_ = nullptr;
     PointCloudShared::Ptr preprocessed_pc_ = nullptr;
-    PointCloudShared::Ptr gicp_input_pc_ = nullptr;
+    PointCloudShared::Ptr registration_input_pc_ = nullptr;
     PointCloudShared::Ptr keyframe_pc_ = nullptr;
     PointCloudShared::Ptr submap_pc_ptr_ = nullptr;
     PointCloudShared::Ptr submap_pc_tmp_ = nullptr;
@@ -106,7 +106,7 @@ private:
     algorithms::filter::PreprocessFilter::Ptr preprocess_filter_ = nullptr;
     algorithms::filter::VoxelGrid::Ptr voxel_filter_ = nullptr;
     algorithms::filter::PolarGrid::Ptr polar_filter_ = nullptr;
-    algorithms::registration::RegistrationGICP::Ptr gicp_ = nullptr;
+    algorithms::registration::Registration::Ptr registration_ = nullptr;
 
     Eigen::Isometry3f prev_odom_;
     Eigen::Isometry3f odom_;

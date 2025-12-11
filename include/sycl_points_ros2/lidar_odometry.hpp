@@ -102,6 +102,7 @@ private:
     algorithms::mapping::OccupancyGridMap::Ptr occupancy_grid_ = nullptr;
     algorithms::knn::KDTree::Ptr submap_tree_ = nullptr;
     algorithms::knn::KNNResult knn_result_;
+    algorithms::knn::KNNResult knn_result_grad_;
 
     algorithms::filter::PreprocessFilter::Ptr preprocess_filter_ = nullptr;
     algorithms::filter::VoxelGrid::Ptr voxel_filter_ = nullptr;

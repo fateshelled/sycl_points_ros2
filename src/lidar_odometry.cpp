@@ -410,27 +410,22 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         return;
     }
 
-    // build KDTree
-    double dt_kdtree_build = 0.0;
-    const auto src_tree = time_utils::measure_execution(
-        [&]() {
-            const auto tree = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
-            return tree;
-        },
-        dt_kdtree_build);
-
     // compute covariances
     double dt_covariance = 0.0;
     time_utils::measure_execution(
         [&]() {
-            auto events = src_tree->knn_search_async(*this->preprocessed_pc_,
-                                                     this->params_.scan_covariance_neighbor_num, this->knn_result_);
-            events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_,
-                                                                        events.evs);
-            // events +=
-            //     algorithms::covariance::compute_normals_from_covariances_async(*this->preprocessed_pc_, events.evs);
-            events += algorithms::covariance::covariance_normalize_async(*this->preprocessed_pc_, events.evs);
-            events.wait_and_throw();
+            if (this->params_.reg_params.reg_type == algorithms::registration::RegType::GICP) {
+                // build KDTree
+                const auto src_tree = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->preprocessed_pc_);
+                auto events = src_tree->knn_search_async(*this->preprocessed_pc_,
+                                                         this->params_.scan_covariance_neighbor_num, this->knn_result_);
+                events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_,
+                                                                            events.evs);
+                // events += algorithms::covariance::covariance_update_plane_async(*this->preprocessed_pc_,
+                // events.evs);
+                events += algorithms::covariance::covariance_normalize_async(*this->preprocessed_pc_, events.evs);
+                events.wait_and_throw();
+            }
         },
         dt_covariance);
 
@@ -452,53 +447,75 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                               this->params_.submap_max_distance_range);
         }
 
-        // copy
-        if (this->submap_pc_tmp_->size() >= this->params_.registration_min_num_points) {
+        if (this->is_first_frame_) {
+            // deep copy
+            this->submap_pc_ptr_.reset(new PointCloudShared(*this->queue_ptr_, *pc));
+        } else if (this->submap_pc_tmp_->size() >= this->params_.registration_min_num_points) {
+            // copy pointer
             this->submap_pc_ptr_ = this->submap_pc_tmp_;
-        } else if (this->is_first_frame_) {
-            this->submap_pc_ptr_ = pc;
         }
 
         this->submap_tree_ = algorithms::knn::KDTree::build(*this->queue_ptr_, *this->submap_pc_ptr_);
 
-        auto events = this->submap_tree_->knn_search_async(
+        auto knn_events = this->submap_tree_->knn_search_async(
             *this->submap_pc_ptr_, this->params_.submap_covariance_neighbor_num, this->knn_result_);
 
+        // compute grad
         sycl_utils::events grad_events;
-        if (this->submap_pc_ptr_->has_rgb() && this->params_.reg_params.photometric.enable) {
-            if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
-                grad_events += this->submap_tree_->knn_search_async(
-                    *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
-                grad_events += algorithms::color_gradient::compute_color_gradients_async(
-                    *this->submap_pc_ptr_, this->knn_result_, grad_events.evs);
-            } else {
-                grad_events += algorithms::color_gradient::compute_color_gradients_async(*this->submap_pc_ptr_,
-                                                                                         this->knn_result_, events.evs);
-            }
-        } else if (this->submap_pc_ptr_->has_intensity() && this->params_.reg_params.photometric.enable) {
-            if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
-                grad_events += this->submap_tree_->knn_search_async(
-                    *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num, this->knn_result_);
-                grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
-                    *this->submap_pc_ptr_, this->knn_result_, grad_events.evs);
-            } else {
-                grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
-                    *this->submap_pc_ptr_, this->knn_result_, events.evs);
+        if (this->params_.reg_params.photometric.enable) {
+            if (this->submap_pc_ptr_->has_rgb()) {
+                if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
+                    grad_events += this->submap_tree_->knn_search_async(
+                        *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num,
+                        this->knn_result_grad_);
+                    grad_events += algorithms::color_gradient::compute_color_gradients_async(
+                        *this->submap_pc_ptr_, this->knn_result_grad_, grad_events.evs);
+                } else {
+                    grad_events += algorithms::color_gradient::compute_color_gradients_async(
+                        *this->submap_pc_ptr_, this->knn_result_, knn_events.evs);
+                }
+            } else if (this->submap_pc_ptr_->has_intensity()) {
+                if (this->params_.submap_covariance_neighbor_num != this->params_.submap_color_gradient_neighbor_num) {
+                    grad_events += this->submap_tree_->knn_search_async(
+                        *this->submap_pc_ptr_, this->params_.submap_color_gradient_neighbor_num,
+                        this->knn_result_grad_);
+                    grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
+                        *this->submap_pc_ptr_, this->knn_result_grad_, grad_events.evs);
+                } else {
+                    grad_events += algorithms::intensity_gradient::compute_intensity_gradients_async(
+                        *this->submap_pc_ptr_, this->knn_result_, knn_events.evs);
+                }
             }
         }
-        events +=
-            algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_ptr_, events.evs);
-        // events += algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_, events.evs);
-        events += algorithms::covariance::covariance_update_plane_async(*this->submap_pc_ptr_, events.evs);
-        events.wait_and_throw();
+        // compute covariances and normals
+        sycl_utils::events cov_events;
+        if (this->params_.reg_params.reg_type != algorithms::registration::RegType::POINT_TO_POINT) {
+            cov_events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_ptr_,
+                                                                            knn_events.evs);
+
+            if (this->params_.reg_params.reg_type == algorithms::registration::RegType::POINT_TO_PLANE ||
+                this->params_.reg_params.reg_type == algorithms::registration::RegType::GENZ) {
+                cov_events +=
+                    algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_,
+                    cov_events.evs);
+            }
+            if (this->params_.reg_params.reg_type == algorithms::registration::RegType::GICP) {
+                cov_events +=
+                    algorithms::covariance::covariance_update_plane_async(*this->submap_pc_ptr_, cov_events.evs);
+                // cov_events += algorithms::covariance::covariance_normalize_async(*this->submap_pc_ptr_,
+                // cov_events.evs);
+            }
+        }
+        knn_events.wait_and_throw();
         grad_events.wait_and_throw();
+        cov_events.wait_and_throw();
     };
 
     if (this->is_first_frame_) {
         build_submap(this->preprocessed_pc_, this->params_.initial_pose);
 
-        this->last_keyframe_time_ = timestamp;
         this->is_first_frame_ = false;
+        this->last_keyframe_time_ = timestamp;
         this->last_frame_time_ = timestamp;
 
         return;
@@ -646,7 +663,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
     double total_time = 0.0;
     total_time += dt_from_ros2_msg;
     total_time += dt_preprocessing;
-    total_time += dt_kdtree_build;
     total_time += dt_covariance;
     total_time += dt_registration;
     total_time += dt_build_submap;
@@ -655,23 +671,21 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
 
     this->add_delta_time("1. fromROS2msg:         ", dt_from_ros2_msg);
     this->add_delta_time("2. Preprocessing:       ", dt_preprocessing);
-    this->add_delta_time("3. KDTree build:        ", dt_kdtree_build);
-    this->add_delta_time("4. compute Covariances: ", dt_covariance);
-    this->add_delta_time("5. Registration:        ", dt_registration);
-    this->add_delta_time("6. Build submap:        ", dt_build_submap);
-    this->add_delta_time("7. toROS2msg:           ", dt_to_ros2_msg);
-    this->add_delta_time("8. publish:             ", dt_publish);
-    this->add_delta_time("9. total:               ", total_time);
+    this->add_delta_time("3. compute Covariances: ", dt_covariance);
+    this->add_delta_time("4. Registration:        ", dt_registration);
+    this->add_delta_time("5. Build submap:        ", dt_build_submap);
+    this->add_delta_time("6. toROS2msg:           ", dt_to_ros2_msg);
+    this->add_delta_time("7. publish:             ", dt_publish);
+    this->add_delta_time("8. total:               ", total_time);
 
     RCLCPP_INFO(this->get_logger(), "1. fromROS2msg:         %9.2f us", dt_from_ros2_msg);
     RCLCPP_INFO(this->get_logger(), "2. Preprocessing:       %9.2f us", dt_preprocessing);
-    RCLCPP_INFO(this->get_logger(), "3. KDTree build:        %9.2f us", dt_kdtree_build);
-    RCLCPP_INFO(this->get_logger(), "4. compute Covariances: %9.2f us", dt_covariance);
-    RCLCPP_INFO(this->get_logger(), "5. Registration:        %9.2f us", dt_registration);
-    RCLCPP_INFO(this->get_logger(), "6. Build submap:        %9.2f us", dt_build_submap);
-    RCLCPP_INFO(this->get_logger(), "7. toROS2msg:           %9.2f us", dt_to_ros2_msg);
-    RCLCPP_INFO(this->get_logger(), "8. publish:             %9.2f us", dt_publish);
-    RCLCPP_INFO(this->get_logger(), "9. total:               %9.2f us", total_time);
+    RCLCPP_INFO(this->get_logger(), "3. compute Covariances: %9.2f us", dt_covariance);
+    RCLCPP_INFO(this->get_logger(), "4. Registration:        %9.2f us", dt_registration);
+    RCLCPP_INFO(this->get_logger(), "5. Build submap:        %9.2f us", dt_build_submap);
+    RCLCPP_INFO(this->get_logger(), "6. toROS2msg:           %9.2f us", dt_to_ros2_msg);
+    RCLCPP_INFO(this->get_logger(), "7. publish:             %9.2f us", dt_publish);
+    RCLCPP_INFO(this->get_logger(), "8. total:               %9.2f us", total_time);
     RCLCPP_INFO(this->get_logger(), "");
 }
 

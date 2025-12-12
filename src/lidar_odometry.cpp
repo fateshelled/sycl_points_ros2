@@ -421,8 +421,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                                                          this->params_.scan_covariance_neighbor_num, this->knn_result_);
                 events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->preprocessed_pc_,
                                                                             events.evs);
-                // events += algorithms::covariance::covariance_update_plane_async(*this->preprocessed_pc_,
-                // events.evs);
+                // events += algorithms::covariance::covariance_update_plane_async(*this->preprocessed_pc_, events.evs);
                 events += algorithms::covariance::covariance_normalize_async(*this->preprocessed_pc_, events.evs);
                 events.wait_and_throw();
             }
@@ -438,9 +437,6 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
             this->occupancy_grid_->add_point_cloud(*this->keyframe_pc_, current_pose);
             this->occupancy_grid_->extract_occupied_points(*this->submap_pc_tmp_, current_pose,
                                                            this->params_.submap_max_distance_range);
-            // 360 deg x 180 deg
-            // this->occupancy_grid_->extract_visible_points(  //
-            //     *this->submap_pc_tmp_, current_pose, 30.0f, 2.0f * M_PIf, M_PIf);
         } else {
             this->submap_voxel_->add_point_cloud(*this->keyframe_pc_, current_pose);
             this->submap_voxel_->downsampling(*this->submap_pc_tmp_, current_pose.translation(),
@@ -490,20 +486,24 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
         // compute covariances and normals
         sycl_utils::events cov_events;
         if (this->params_.reg_params.reg_type != algorithms::registration::RegType::POINT_TO_POINT) {
-            cov_events += algorithms::covariance::compute_covariances_async(this->knn_result_, *this->submap_pc_ptr_,
+            if (this->params_.reg_params.reg_type == algorithms::registration::RegType::POINT_TO_PLANE) {
+                cov_events += algorithms::covariance::compute_normals_async(this->knn_result_, *this->submap_pc_ptr_,
                                                                             knn_events.evs);
-
-            if (this->params_.reg_params.reg_type == algorithms::registration::RegType::POINT_TO_PLANE ||
-                this->params_.reg_params.reg_type == algorithms::registration::RegType::GENZ) {
-                cov_events +=
-                    algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_,
-                    cov_events.evs);
             }
+            else if (this->params_.reg_params.reg_type == algorithms::registration::RegType::GICP ||
+                this->params_.reg_params.reg_type == algorithms::registration::RegType::GENZ) {
+                cov_events += algorithms::covariance::compute_covariances_async(this->knn_result_,
+                                                                                *this->submap_pc_ptr_, knn_events.evs);
+            }
+
             if (this->params_.reg_params.reg_type == algorithms::registration::RegType::GICP) {
                 cov_events +=
                     algorithms::covariance::covariance_update_plane_async(*this->submap_pc_ptr_, cov_events.evs);
                 // cov_events += algorithms::covariance::covariance_normalize_async(*this->submap_pc_ptr_,
                 // cov_events.evs);
+            } else if (this->params_.reg_params.reg_type == algorithms::registration::RegType::GENZ) {
+                cov_events +=
+                    algorithms::covariance::compute_normals_from_covariances_async(*this->submap_pc_ptr_, cov_events.evs);
             }
         }
         knn_events.wait_and_throw();
@@ -589,7 +589,7 @@ void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2
                 return false;
             }
 
-            // for octomap
+            // for occupancy grid map
             if (this->params_.occupancy_grid_map_enable) {
                 build_submap(this->preprocessed_pc_, reg_result.T);
                 return true;

@@ -249,10 +249,10 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
             params.reg_params.lambda = this->declare_parameter<double>("registration/lambda", params.reg_params.lambda);
             params.reg_params.max_correspondence_distance = this->declare_parameter<double>(
                 "registration/max_correspondence_distance", params.reg_params.max_correspondence_distance);
-            params.reg_params.crireria.translation = this->declare_parameter<double>(
-                "registration/criteria/translation", params.reg_params.crireria.translation);
-            params.reg_params.crireria.rotation =
-                this->declare_parameter<double>("registration/criteria/rotation", params.reg_params.crireria.rotation);
+            params.reg_params.criteria.translation = this->declare_parameter<double>(
+                "registration/criteria/translation", params.reg_params.criteria.translation);
+            params.reg_params.criteria.rotation =
+                this->declare_parameter<double>("registration/criteria/rotation", params.reg_params.criteria.rotation);
 
             params.reg_params.verbose =
                 this->declare_parameter<bool>("registration/verbose", params.reg_params.verbose);

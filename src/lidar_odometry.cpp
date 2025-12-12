@@ -360,7 +360,7 @@ LiDAROdometryNode::Parameters LiDAROdometryNode::get_parameters() {
     return params;
 }
 
-void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
+void LiDAROdometryNode::point_cloud_callback(const sensor_msgs::msg::PointCloud2::UniquePtr msg) {
     const double timestamp = rclcpp::Time(msg->header.stamp).seconds();
     if (this->last_frame_time_ > 0.0) {
         this->dt_ = static_cast<float>(timestamp - this->last_frame_time_);

@@ -77,12 +77,6 @@ def generate_launch_description():
                 default_value='',
                 description='rosbag path',
             ),
-            DeclareLaunchArgument(
-                'rosbag/storage_id',
-                default_value='sqlite3',
-                # default_value='mcap',
-                description='rosbag path',
-            ),
         ]
     )
 
@@ -153,7 +147,6 @@ def generate_launch_description():
                                     'play.loop': False,
                                     'play.start_paused': False,
                                     'storage.uri': LaunchConfiguration('rosbag/uri'),
-                                    'storage.storage_id': LaunchConfiguration('rosbag/storage_id'),
                                     'storage.storage_config_uri': '',
                                 }
                             ],
